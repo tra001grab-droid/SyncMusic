@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -57,12 +58,33 @@
         android:visibility="gone" />
 
     <!-- Shown only while the current item is a YouTube video. -->
-    <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
-        android:id="@+id/youtubeView"
+    <FrameLayout
+        android:id="@+id/playerContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:visibility="gone"
-        app:enableAutomaticInitialization="false" />
+        android:layout_gravity="center_horizontal"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+            android:id="@+id/youtubeView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            app:enableAutomaticInitialization="false" />
+
+        <Button
+            android:id="@+id/btnFullscreen"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:background="#99000000"
+            android:padding="0dp"
+            android:text="⛶"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp" />
+    </FrameLayout>
 
     <!-- Host controls + playlist -->
     <LinearLayout

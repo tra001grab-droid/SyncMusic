@@ -3,6 +3,7 @@ package com.example.syncmusic
 import android.content.Context
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -13,6 +14,9 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -24,6 +28,9 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
 import java.io.File
 import java.util.UUID
@@ -45,6 +52,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var status: TextView
     private lateinit var nowPlaying: TextView
     private lateinit var youtubeView: YouTubePlayerView
+    private lateinit var playerContainer: FrameLayout
+    private var fullscreen = false
+    private var savedVisibility = emptyMap<View, Int>()
     private var multicastLock: WifiManager.MulticastLock? = null
     private lateinit var searchPanel: SearchPanel
 
@@ -100,6 +110,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         status = findViewById(R.id.status)
         nowPlaying = findViewById(R.id.nowPlaying)
         youtubeView = findViewById(R.id.youtubeView)
+        playerContainer = findViewById(R.id.playerContainer)
+        findViewById<Button>(R.id.btnFullscreen).setOnClickListener { setFullscreen(!fullscreen) }
         lifecycle.addObserver(youtubeView)
 
         // Only the host advances the playlist; clients follow its ITEM messages.
@@ -131,6 +143,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    fullscreen -> setFullscreen(false)
                     !searchPanel.isOpen -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
                     !searchPanel.goBack() -> showSearch(false)
                 }
@@ -200,12 +213,65 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun showSearch(open: Boolean) {
         findViewById<View>(R.id.hostPanel).visibility = if (open) View.GONE else View.VISIBLE
         if (open) searchPanel.show() else searchPanel.hide()
+        sizePlayer()
+    }
+
+    /** Full width normally; about half width while searching so the results get the space. */
+    private fun sizePlayer() {
+        if (fullscreen) return
+        val compact = searchPanel.isOpen
+        playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
+            width = if (compact) resources.displayMetrics.widthPixels * 11 / 20 else ViewGroup.LayoutParams.MATCH_PARENT
+            height = ViewGroup.LayoutParams.WRAP_CONTENT
+            weight = 0f
+        }
+    }
+
+    /** Our own fullscreen: only the player, landscape, system bars hidden. The WebView is never moved. */
+    private fun setFullscreen(on: Boolean) {
+        if (on == fullscreen) return
+        fullscreen = on
+        val root = findViewById<LinearLayout>(R.id.root)
+        val bars = WindowInsetsControllerCompat(window, window.decorView)
+        val button = findViewById<Button>(R.id.btnFullscreen)
+        if (on) {
+            savedVisibility = (0 until root.childCount).map { root.getChildAt(it) }
+                .filter { it !== playerContainer }
+                .associateWith { it.visibility }
+            savedVisibility.keys.forEach { it.visibility = View.GONE }
+            root.setPadding(0, 0, 0, 0)
+            playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
+                width = ViewGroup.LayoutParams.MATCH_PARENT
+                height = 0
+                weight = 1f
+            }
+            youtubeView.layoutParams = youtubeView.layoutParams.apply { height = ViewGroup.LayoutParams.MATCH_PARENT }
+            supportActionBar?.hide()
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(WindowInsetsCompat.Type.systemBars())
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            button.text = "✕"
+        } else {
+            savedVisibility.forEach { (view, visibility) -> view.visibility = visibility }
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            root.setPadding(pad, pad, pad, pad)
+            youtubeView.layoutParams = youtubeView.layoutParams.apply { height = ViewGroup.LayoutParams.WRAP_CONTENT }
+            supportActionBar?.show()
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            bars.show(WindowInsetsCompat.Type.systemBars())
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            button.text = "⛶"
+            // Width depends on the (now portrait) screen size, so wait for the rotation first.
+            root.post { sizePlayer() }
+        }
     }
 
     private fun showItem(title: String?, youtube: Boolean) {
         nowPlaying.visibility = if (title == null) View.GONE else View.VISIBLE
         nowPlaying.text = if (youtube) "▶ YouTube: $title" else "🎵 $title"
-        youtubeView.visibility = if (youtube) View.VISIBLE else View.GONE
+        if (!youtube) setFullscreen(false)
+        playerContainer.visibility = if (youtube) View.VISIBLE else View.GONE
     }
 
     // ---------------------------------------------------------------- Host
