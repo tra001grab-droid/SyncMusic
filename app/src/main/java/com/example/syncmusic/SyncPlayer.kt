@@ -18,6 +18,10 @@ interface SyncPlayer {
     val position: Long
     /** True once playback was requested (even while still buffering). */
     val isActive: Boolean
+    /** True only while audio is actually advancing (not buffering, not paused). */
+    val isPlaying: Boolean
+    /** How long (ms) the player has been playing without interruption; 0 when not playing. */
+    val steadyMs: Long
     /** Whether fine speed changes (e.g. 0.98x) are available for gentle drift correction. */
     val supportsSpeed: Boolean
     /** Error (ms) above which the player jumps instead of nudging. */
@@ -33,16 +37,23 @@ interface SyncPlayer {
 }
 
 class LocalPlayer(context: Context, onEnded: () -> Unit) : SyncPlayer {
+    private var playingSince = 0L
     private val exo = ExoPlayer.Builder(context).build().apply {
         addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) onEnded()
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playingSince = if (isPlaying) now() else 0L
             }
         })
     }
 
     override val position get() = exo.currentPosition
     override val isActive get() = exo.playWhenReady
+    override val isPlaying get() = exo.isPlaying
+    override val steadyMs get() = if (exo.isPlaying && playingSince > 0) now() - playingSince else 0L
     override val supportsSpeed = true
     override val hardSeekThresholdMs = 100L
 
@@ -60,7 +71,11 @@ class LocalPlayer(context: Context, onEnded: () -> Unit) : SyncPlayer {
         exo.play()
     }
 
-    override fun seekTo(ms: Long) = exo.seekTo(ms)
+    override fun seekTo(ms: Long) {
+        playingSince = now()
+        exo.seekTo(ms)
+    }
+
     override fun pause() = exo.pause()
     override fun setSpeed(speed: Float) = exo.setPlaybackSpeed(speed)
     fun release() = exo.release()
@@ -76,8 +91,15 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
     private var onCued: (() -> Unit)? = null
     private var requested = false
     private var playing = false
+    private var playingSince = 0L
     private var lastSecond = 0f
-    private var lastSecondAt = 0L
+    /**
+     * Recent (receivedAt, receivedAt - mediaMs) pairs while playing. A report that arrives late or
+     * is rounded down only makes the second value bigger, so the smallest one is the best estimate.
+     */
+    private val anchors = ArrayDeque<Pair<Long, Long>>()
+    /** Reports sent before a seek can still arrive just after it; ignore them. */
+    private var ignoreReportsUntil = 0L
 
     init {
         val listener = object : AbstractYouTubePlayerListener() {
@@ -87,13 +109,21 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
             }
 
             override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
+                val t = now()
+                if (t < ignoreReportsUntil) return
                 lastSecond = second
-                lastSecondAt = now()
+                if (!playing) return
+                anchors.addLast(t to t - (second * 1000).toLong())
+                while (anchors.isNotEmpty() && t - anchors.first().first > 2000) anchors.removeFirst()
             }
 
             override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
-                playing = state == PlayerConstants.PlayerState.PLAYING
-                if (playing) lastSecondAt = now()
+                val nowPlaying = state == PlayerConstants.PlayerState.PLAYING
+                if (nowPlaying != playing) {
+                    anchors.clear()
+                    playingSince = if (nowPlaying) now() else 0L
+                }
+                playing = nowPlaying
                 if (state == PlayerConstants.PlayerState.ENDED) onEnded()
             }
         }
@@ -102,20 +132,23 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
         view.initialize(listener, options)
     }
 
-    /** Position is reported roughly every 100ms; extrapolate between reports while playing. */
+    /** Position is reported about every 100ms with jitter; smooth it over the last 2 seconds. */
     override val position: Long
         get() {
-            val base = (lastSecond * 1000).toLong()
-            return if (playing) base + (now() - lastSecondAt) else base
+            if (!playing || anchors.isEmpty()) return (lastSecond * 1000).toLong()
+            return now() - anchors.minOf { it.second }
         }
     override val isActive get() = requested
+    override val isPlaying get() = playing
+    override val steadyMs get() = if (playing && playingSince > 0) now() - playingSince else 0L
     override val supportsSpeed = false
-    override val hardSeekThresholdMs = 250L
+    override val hardSeekThresholdMs = 300L
 
     /** Cue [videoId]; [ready] runs once the player can accept commands. */
     fun load(videoId: String, ready: () -> Unit) {
         requested = false
         playing = false
+        anchors.clear()
         lastSecond = 0f
         onCued = ready
         if (player == null) pendingVideo = videoId else cue(videoId)
@@ -139,7 +172,9 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
 
     override fun seekTo(ms: Long) {
         lastSecond = ms / 1000f
-        lastSecondAt = now()
+        anchors.clear()
+        ignoreReportsUntil = now() + 300
+        if (playing) playingSince = now()
         player?.seekTo(ms / 1000f)
     }
 

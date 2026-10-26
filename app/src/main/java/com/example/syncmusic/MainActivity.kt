@@ -83,7 +83,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var clientVersion = 0
     private var loaded = false
     private var hostPlaying = false
-    private var lastHardSeekAt = 0L
+    /** Recent sync errors (ms); decisions use their median so one noisy reading can't cause a jump. */
+    private val syncErrors = ArrayDeque<Long>()
+    /** YouTube buffers after every jump; aim this far ahead. Learned per phone. */
+    private var youtubeSeekLeadMs = 400L
+    private var measuringSeekLead = false
     private var calibrationMs = 0L
 
     private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -103,7 +107,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             val s = server ?: return
             val p = active ?: return
             if (p.isActive) {
-                s.broadcast("POS ${s.version} ${p.position} ${now()}")
+                // While the host itself is buffering its position isn't moving; reporting it would
+                // tell every client to jump to a wrong time.
+                if (p.isPlaying) s.broadcast("POS ${s.version} ${p.position} ${now()}")
                 main.postDelayed(this, POS_INTERVAL_MS)
             }
         }
@@ -580,6 +586,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             loaded = false
             hostPlaying = false
             cancelStart()
+            resetSync()
             localPlayer.pause()
             localPlayer.setSpeed(1f)
             ytPlayer.stop()
@@ -627,9 +634,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 p.cueAt(posMs + calibrationMs)
                 scheduleStart(delay) { p.startFrom(posMs + calibrationMs) }
             } else {
-                p.startFrom(posMs - delay + calibrationMs)
+                // Joining late: YouTube will buffer after this jump, so aim a bit ahead.
+                p.startFrom(posMs - delay + calibrationMs + if (p === ytPlayer) youtubeSeekLeadMs else 0L)
             }
-            lastHardSeekAt = now()
+            resetSync()
             setStatus("កំពុងចាក់ (sync) — RTT ${client?.bestRtt} ms")
         }
     }
@@ -638,6 +646,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         main.post {
             hostPlaying = false
             cancelStart()
+            resetSync()
             active?.pause()
             active?.setSpeed(1f)
             setStatus("បានផ្អាក")
@@ -650,21 +659,34 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             val p = active ?: return@post
             hostPlaying = true
             if (pendingStart != null || !canPlay(p)) return@post
+            val youtube = p === ytPlayer
             val expected = posMs + (now() - localTime) + calibrationMs
             if (!p.isActive) {
-                p.startFrom(expected)
-                lastHardSeekAt = now()
+                p.startFrom(expected + if (youtube) youtubeSeekLeadMs else 0L)
+                resetSync()
                 return@post
             }
-            // After a jump the player needs time to buffer; YouTube much longer than local files.
-            val cooldown = if (p.supportsSpeed) 500L else 3000L
-            if (now() - lastHardSeekAt < cooldown) return@post
-            val error = p.position - expected
+            // Buffering, or just resumed: the position isn't trustworthy yet, so don't react.
+            if (!p.isPlaying || p.steadyMs < if (youtube) 1500L else 300L) {
+                setStatus("កំពុង buffer…")
+                return@post
+            }
+            syncErrors.addLast(p.position - expected)
+            if (syncErrors.size > 3) syncErrors.removeFirst()
+            if (syncErrors.size < if (youtube) 3 else 2) return@post
+            val error = syncErrors.sorted()[syncErrors.size / 2]
+
+            // First steady reading after a jump shows how far buffering left us behind; learn it.
+            if (measuringSeekLead && youtube) {
+                youtubeSeekLeadMs = (youtubeSeekLeadMs - error * 7 / 10).coerceIn(0L, 3000L)
+                measuringSeekLead = false
+            }
             when {
                 abs(error) > p.hardSeekThresholdMs -> {
                     p.setSpeed(1f)
-                    p.seekTo(expected)
-                    lastHardSeekAt = now()
+                    p.seekTo(expected + if (youtube) youtubeSeekLeadMs else 0L)
+                    resetSync()
+                    measuringSeekLead = youtube
                 }
                 // Small error: play slightly faster/slower (pitch is preserved) until aligned.
                 p.supportsSpeed && abs(error) > SOFT_ERROR_MS ->
@@ -673,6 +695,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             }
             setStatus("កំពុងចាក់ (sync)\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
         }
+    }
+
+    private fun resetSync() {
+        syncErrors.clear()
+        measuringSeekLead = false
     }
 
     // ---------------------------------------------------------------- misc
