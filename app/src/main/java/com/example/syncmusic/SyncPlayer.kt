@@ -85,10 +85,24 @@ class LocalPlayer(context: Context, onEnded: () -> Unit) : SyncPlayer {
  * YouTube via the official IFrame player (android-youtube-player). Audio is never extracted;
  * every phone streams the video itself and we only align positions, so precision is lower.
  */
-class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlayer {
+class YouTubeSyncPlayer(
+    private val view: YouTubePlayerView,
+    onEnded: () -> Unit,
+    /** Paused by something other than the app (a tap on the video, another app taking audio…). */
+    onUnexpectedPause: () -> Unit,
+) : SyncPlayer {
+    companion object {
+        /** Buffer this much of the video before reporting ready, so all phones start smoothly. */
+        const val PRELOAD_FRACTION = 0.2f
+        const val PRELOAD_TIMEOUT_MS = 60_000L
+    }
+
     private var player: YouTubePlayer? = null
     private var pendingVideo: String? = null
     private var onCued: (() -> Unit)? = null
+    private var onProgress: ((percent: Int) -> Unit)? = null
+    private var preloading = false
+    private var preloadToken = 0
     private var requested = false
     private var playing = false
     private var playingSince = 0L
@@ -105,7 +119,13 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
         val listener = object : AbstractYouTubePlayerListener() {
             override fun onReady(youTubePlayer: YouTubePlayer) {
                 player = youTubePlayer
-                pendingVideo?.let { cue(it) }
+                pendingVideo?.let { preload(it) }
+            }
+
+            override fun onVideoLoadedFraction(youTubePlayer: YouTubePlayer, loadedFraction: Float) {
+                if (!preloading) return
+                onProgress?.invoke((loadedFraction * 100).toInt().coerceAtMost(100))
+                if (loadedFraction >= PRELOAD_FRACTION) finishPreload()
             }
 
             override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
@@ -124,7 +144,8 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
                     playingSince = if (nowPlaying) now() else 0L
                 }
                 playing = nowPlaying
-                if (state == PlayerConstants.PlayerState.ENDED) onEnded()
+                if (state == PlayerConstants.PlayerState.ENDED && !preloading) onEnded()
+                if (state == PlayerConstants.PlayerState.PAUSED && requested && !preloading) onUnexpectedPause()
             }
         }
         val options = IFramePlayerOptions.Builder(view.context).controls(0).rel(0).build()
@@ -144,24 +165,47 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
     override val supportsSpeed = false
     override val hardSeekThresholdMs = 300L
 
-    /** Cue [videoId]; [ready] runs once the player can accept commands. */
-    fun load(videoId: String, ready: () -> Unit) {
+    /**
+     * Load [videoId] and buffer [PRELOAD_FRACTION] of it (playing muted, since the IFrame player only
+     * buffers while playing), then rewind to the start paused. [progress] reports the loaded percent;
+     * [ready] runs when done (or after [PRELOAD_TIMEOUT_MS], so a slow phone can't block everyone).
+     */
+    fun load(videoId: String, ready: () -> Unit, progress: (Int) -> Unit = {}) {
         requested = false
         playing = false
         anchors.clear()
         lastSecond = 0f
         onCued = ready
-        if (player == null) pendingVideo = videoId else cue(videoId)
+        onProgress = progress
+        if (player == null) pendingVideo = videoId else preload(videoId)
     }
 
-    private fun cue(videoId: String) {
+    private fun preload(videoId: String) {
         pendingVideo = null
-        player?.cueVideo(videoId, 0f)
+        val p = player ?: return
+        preloading = true
+        val token = ++preloadToken
+        p.mute()
+        p.loadVideo(videoId, 0f)
+        view.postDelayed({ if (preloading && token == preloadToken) finishPreload() }, PRELOAD_TIMEOUT_MS)
+    }
+
+    private fun finishPreload() {
+        preloading = false
+        player?.let {
+            it.pause()
+            it.seekTo(0f)
+            it.unMute()
+        }
+        lastSecond = 0f
+        anchors.clear()
+        ignoreReportsUntil = now() + 300
+        onProgress = null
         onCued?.invoke()
         onCued = null
     }
 
-    // seekTo() on a cued video starts playback in the IFrame API, so nothing is done here.
+    // The video is already buffered and paused at the start (see load()).
     override fun cueAt(ms: Long) {}
 
     override fun startFrom(ms: Long) {
@@ -185,8 +229,17 @@ class YouTubeSyncPlayer(view: YouTubePlayerView, onEnded: () -> Unit) : SyncPlay
 
     override fun setSpeed(speed: Float) {}
 
+    /** Resume after an unexpected pause, keeping the current position. */
+    fun resume() {
+        if (requested) player?.play()
+    }
+
     fun stop() {
         requested = false
+        preloading = false
+        onCued = null
+        onProgress = null
         player?.pause()
+        player?.unMute()
     }
 }

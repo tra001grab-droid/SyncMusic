@@ -93,6 +93,8 @@ class SyncClient(
 
     fun sendReady(version: Int) = send("READY $version")
 
+    fun sendProgress(version: Int, percent: Int) = send("PROGRESS $version $percent")
+
     private fun startPinging() = thread(name = "sync-ping", isDaemon = true) {
         var count = 0
         while (running) {

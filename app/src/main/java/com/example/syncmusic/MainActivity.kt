@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
         private const val POS_INTERVAL_MS = 1000L
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
-        private const val READY_TIMEOUT_MS = 10_000L   // max wait for clients before auto-play
+        private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -131,7 +131,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
         // Only the host advances the playlist; clients follow its ITEM messages.
         localPlayer = LocalPlayer(this) { onItemEnded() }
-        ytPlayer = YouTubeSyncPlayer(youtubeView) { onItemEnded() }
+        ytPlayer = YouTubeSyncPlayer(youtubeView, onEnded = { onItemEnded() }, onUnexpectedPause = { onYouTubePausedByUser() })
+        // Taps on the video would pause YouTube behind the app's back; route them through the app instead.
+        findViewById<View>(R.id.playerTouchGuard).setOnClickListener {
+            when {
+                server != null -> if (active?.isActive == true) hostPause() else hostPlay()
+                else -> Toast.makeText(this, "Host ជាអ្នកបញ្ជាការចាក់", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         backgroundYouTube = prefs.getBoolean("yt_background", true)
@@ -448,7 +455,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 localPlayer.pause()
                 showItem(item.title, youtube = true)
                 active = ytPlayer
-                ytPlayer.load(item.videoId) { if (autoPlay) startWhenClientsReady(version) }
+                setStatus(hostStatus("⏳ កំពុងរៀបចំ (ទាញយក ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%)…"))
+                ytPlayer.load(
+                    item.videoId,
+                    ready = { if (autoPlay) startWhenClientsReady(version) },
+                    progress = { pct -> setStatus(hostStatus("⏳ Host កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")) },
+                )
             }
         }
     }
@@ -466,7 +478,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                     waitForClients = null
                     hostPlay()
                 } else {
-                    setStatus(hostStatus("រង់ចាំទូរស័ព្ទ… ($ready/${s.clientCount} រួចរាល់)"))
+                    val pending = s.pendingProgress(version).joinToString(", ") { "$it%" }
+                    setStatus(hostStatus("⏳ រង់ចាំទូរស័ព្ទ… ($ready/${s.clientCount} រួចរាល់) កំពុងទាញយក: $pending"))
                     main.postDelayed(this, 200)
                 }
             }
@@ -497,7 +510,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             p.startFrom(pos)
             main.postDelayed(positionTicker, POS_INTERVAL_MS)
         }
-        setStatus(hostStatus("កំពុងចាក់"))
+        setStatus(hostStatus("✅ កំពុង sync"))
     }
 
     private fun hostStopCurrent() {
@@ -610,7 +623,34 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (version != clientVersion) return@post
             showItem(nowPlaying.text.toString(), youtube = true)
             active = ytPlayer
-            ytPlayer.load(videoId) { if (version == clientVersion) markLoaded(version) }
+            var lastSent = -1
+            ytPlayer.load(
+                videoId,
+                ready = { if (version == clientVersion) markLoaded(version) },
+                progress = { pct ->
+                    if (version == clientVersion && pct != lastSent) {
+                        lastSent = pct
+                        client?.sendProgress(version, pct)
+                        setStatus("⏳ កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")
+                    }
+                },
+            )
+            // The host may have announced the item before it knew the title.
+            if (nowPlaying.text.toString() == videoId) thread {
+                val title = YouTubeIds.fetchTitle(videoId) ?: return@thread
+                main.post { if (version == clientVersion) showItem(title, youtube = true) }
+            }
+        }
+    }
+
+    /** YouTube paused without the app asking (tap on video, audio focus lost, …). */
+    private fun onYouTubePausedByUser() {
+        if (server != null) {
+            // Host: treat it as a real pause so every phone pauses too.
+            hostPause()
+        } else if (hostPlaying && canPlay(ytPlayer)) {
+            // Client: the host is still playing, so keep going.
+            main.postDelayed({ ytPlayer.resume() }, 300)
         }
     }
 
@@ -618,7 +658,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         loaded = true
         client?.sendReady(version)
         // If the host is already playing, the next POS message starts us in sync.
-        setStatus("រួចរាល់ — រង់ចាំ Host ចុច Play")
+        setStatus("✔ រួចរាល់ — រង់ចាំទូរស័ព្ទផ្សេងទៀត…")
     }
 
     override fun onPlay(version: Int, posMs: Long, localStartTime: Long) {
@@ -693,7 +733,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                     p.setSpeed((1f - error / 2000f).coerceIn(0.97f, 1.03f))
                 else -> p.setSpeed(1f)
             }
-            setStatus("កំពុងចាក់ (sync)\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
+            val state = if (abs(error) <= p.hardSeekThresholdMs) "✅ កំពុង sync" else "⏳ កំពុងតម្រូវ…"
+            setStatus("$state\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
         }
     }
 

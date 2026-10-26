@@ -11,7 +11,7 @@ import kotlin.concurrent.thread
 /**
  * Host side. Line-based text protocol over TCP. Every playlist switch bumps `version`;
  * messages carry it so clients ignore anything about a previous item.
- *   client -> host : PING <t0> | READY <version>
+ *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent>
  *   host -> client : PONG <t0> <hostNow>
  *                    ITEM <version> local <httpPort> <title>
  *                    ITEM <version> yt <videoId> <title>
@@ -23,6 +23,8 @@ class SyncServer(private val onEvent: (String) -> Unit) {
     private val http = FileHttpServer()
     /** Connected clients -> last item version they reported READY for. */
     private val clients = ConcurrentHashMap<PrintWriter, Int>()
+    /** Connected clients -> how much of the current YouTube video they have buffered (%). */
+    private val progress = ConcurrentHashMap<PrintWriter, Int>()
     private val sender = Executors.newSingleThreadExecutor()
     @Volatile private var itemMessage: String? = null
 
@@ -44,6 +46,7 @@ class SyncServer(private val onEvent: (String) -> Unit) {
     /** Announce a new playlist item to all clients; returns its version. */
     fun setItem(item: PlaylistItem): Int {
         val v = ++version
+        progress.clear()
         val title = item.title.replace('\n', ' ')
         val message = when (item) {
             is PlaylistItem.Local -> {
@@ -61,6 +64,10 @@ class SyncServer(private val onEvent: (String) -> Unit) {
     }
 
     fun readyCount(v: Int) = clients.values.count { it == v }
+
+    /** Loading percent of each client that isn't ready yet for version [v]. */
+    fun pendingProgress(v: Int): List<Int> =
+        clients.filter { it.value != v }.keys.map { progress[it] ?: 0 }
 
     fun broadcast(message: String) {
         sender.execute {
@@ -84,11 +91,15 @@ class SyncServer(private val onEvent: (String) -> Unit) {
                     // Reply as fast as possible so round-trip time stays small.
                     "PING" -> synchronized(out) { out.println("PONG ${parts[1]} ${now()}") }
                     "READY" -> parts.getOrNull(1)?.toIntOrNull()?.let { clients[out] = it }
+                    "PROGRESS" -> if (parts.getOrNull(1)?.toIntOrNull() == version) {
+                        parts.getOrNull(2)?.toIntOrNull()?.let { progress[out] = it }
+                    }
                 }
             }
         } catch (_: Exception) {
         } finally {
             clients.remove(out)
+            progress.remove(out)
             socket.close()
             onEvent("ទូរស័ព្ទផ្ដាច់")
         }

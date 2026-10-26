@@ -81,6 +81,14 @@
             android:layout_gravity="center"
             app:enableAutomaticInitialization="false" />
 
+        <!-- Catches taps so they go through the app (host: play/pause for everyone). -->
+        <View
+            android:id="@+id/playerTouchGuard"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:focusable="true" />
+
         <Button
             android:id="@+id/btnFullscreen"
             android:layout_width="44dp"
