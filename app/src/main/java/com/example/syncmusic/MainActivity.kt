@@ -280,9 +280,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val screenWidth = minOf(metrics.widthPixels, metrics.heightPixels)  // the app is portrait
         val padding = (32 * metrics.density).toInt()
         val width = if (searchPanel.isOpen) screenWidth * 11 / 20 else screenWidth - padding
+        // Exact height on the container too: with wrap_content, its match_parent tap guard would
+        // stretch it to all free space and push the controls off screen.
         playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
             this.width = width
-            height = ViewGroup.LayoutParams.WRAP_CONTENT
+            height = width * 9 / 16
             weight = 0f
         }
         youtubeView.layoutParams = youtubeView.layoutParams.apply {
