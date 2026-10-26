@@ -8,18 +8,39 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.graphics.Bitmap
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import java.io.ByteArrayInputStream
 
 /**
  * Search YouTube without leaving the main screen: shows the mobile YouTube site and, when the
  * user opens a video, hands its id to [onPick] and returns to the results so they can keep browsing.
  * It lives inside MainActivity so the synced YouTube player above it stays visible (and playing).
  */
+private const val NO_VIDEO_JS = """
+(function () {
+  if (window.__syncMusicNoVideo) return;
+  window.__syncMusicNoVideo = true;
+  var stop = function (v) {
+    if (!v || v.tagName !== 'VIDEO') return;
+    try { v.muted = true; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+  };
+  document.addEventListener('play', function (e) { stop(e.target); }, true);
+  document.addEventListener('playing', function (e) { stop(e.target); }, true);
+  document.querySelectorAll('video').forEach(stop);
+  var css = document.createElement('style');
+  css.textContent = 'video { visibility: hidden !important; }';
+  (document.head || document.documentElement).appendChild(css);
+})();
+"""
+
 @SuppressLint("SetJavaScriptEnabled")
 class SearchPanel(
     private val activity: Activity,
@@ -48,9 +69,28 @@ class SearchPanel(
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = true
+        // The search page never plays anything itself (the synced player above does), but YouTube's
+        // mobile site auto-plays previews in the results. Block video data and stop any preview.
         web.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val host = request.url.host ?: return null
+                if (!host.endsWith("googlevideo.com")) return null
+                return WebResourceResponse(
+                    "text/plain", "utf-8", 403, "Blocked by Sync Music", emptyMap(), ByteArrayInputStream(ByteArray(0))
+                )
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                view.evaluateJavascript(NO_VIDEO_JS, null)
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                view.evaluateJavascript(NO_VIDEO_JS, null)
+            }
+
             // YouTube's mobile site is a single-page app, so in-page navigation shows up here.
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                view.evaluateJavascript(NO_VIDEO_JS, null)
                 val isVideo = url.contains("/watch") || url.contains("/shorts/")
                 val id = if (isVideo) YouTubeIds.parse(url) else null
                 if (id == null) {
@@ -58,7 +98,7 @@ class SearchPanel(
                     return
                 }
                 // Keep the page's own player silent, then go back to the results list.
-                view.evaluateJavascript("document.querySelectorAll('video').forEach(v => { v.muted = true; v.pause(); })", null)
+                view.evaluateJavascript(NO_VIDEO_JS, null)
                 view.post { if (view.canGoBack()) view.goBack() else view.loadUrl(resultsUrl) }
                 // The same navigation can be reported more than once.
                 if (id == lastPick && now() - lastPickAt < 3000) return
