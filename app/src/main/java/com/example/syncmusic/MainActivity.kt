@@ -5,6 +5,7 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -46,6 +47,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
         private const val POS_INTERVAL_MS = 1000L
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
+        private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
 
@@ -81,6 +83,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     // Client state (main thread only)
     private var clientVersion = 0
+    private var clientTitle = ""
     private var loaded = false
     private var hostPlaying = false
     /** Recent sync errors (ms); decisions use their median so one noisy reading can't cause a jump. */
@@ -174,6 +177,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             onVoice = { startVoiceSearch() },
         )
         searchPanel.hide()
+        sizePlayer()
         findViewById<Button>(R.id.btnSearch).setOnClickListener { showSearch(true) }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -266,15 +270,30 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         sizePlayer()
     }
 
-    /** Full width normally; about half width while searching so the results get the space. */
+    /**
+     * Full width normally; about half width while searching so the results get the space.
+     * Sizes are explicit 16:9 so the player can never grow and push the controls off screen.
+     */
     private fun sizePlayer() {
         if (fullscreen) return
-        val compact = searchPanel.isOpen
+        val metrics = resources.displayMetrics
+        val screenWidth = minOf(metrics.widthPixels, metrics.heightPixels)  // the app is portrait
+        val padding = (32 * metrics.density).toInt()
+        val width = if (searchPanel.isOpen) screenWidth * 11 / 20 else screenWidth - padding
         playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
-            width = if (compact) resources.displayMetrics.widthPixels * 11 / 20 else ViewGroup.LayoutParams.MATCH_PARENT
+            this.width = width
             height = ViewGroup.LayoutParams.WRAP_CONTENT
             weight = 0f
         }
+        youtubeView.layoutParams = youtubeView.layoutParams.apply {
+            this.width = ViewGroup.LayoutParams.MATCH_PARENT
+            height = width * 9 / 16
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        sizePlayer()
     }
 
     /** Our own fullscreen: only the player, landscape, system bars hidden. The WebView is never moved. */
@@ -306,7 +325,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             savedVisibility.forEach { (view, visibility) -> view.visibility = visibility }
             val pad = (16 * resources.displayMetrics.density).toInt()
             root.setPadding(pad, pad, pad, pad)
-            youtubeView.layoutParams = youtubeView.layoutParams.apply { height = ViewGroup.LayoutParams.WRAP_CONTENT }
             supportActionBar?.show()
             WindowCompat.setDecorFitsSystemWindows(window, true)
             bars.show(WindowInsetsCompat.Type.systemBars())
@@ -596,6 +614,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onItemChanging(version: Int, title: String) {
         main.post {
             clientVersion = version
+            clientTitle = title
             loaded = false
             hostPlaying = false
             cancelStart()
@@ -611,7 +630,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onLocalItem(version: Int, file: File) {
         main.post {
             if (version != clientVersion) return@post
-            showItem(nowPlaying.text.toString(), youtube = false)
+            showItem(clientTitle, youtube = false)
             localPlayer.load(file)
             active = localPlayer
             markLoaded(version)
@@ -621,7 +640,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onYouTubeItem(version: Int, videoId: String) {
         main.post {
             if (version != clientVersion) return@post
-            showItem(nowPlaying.text.toString(), youtube = true)
+            showItem(clientTitle, youtube = true)
             active = ytPlayer
             var lastSent = -1
             ytPlayer.load(
@@ -636,7 +655,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 },
             )
             // The host may have announced the item before it knew the title.
-            if (nowPlaying.text.toString() == videoId) thread {
+            if (clientTitle == videoId) thread {
                 val title = YouTubeIds.fetchTitle(videoId) ?: return@thread
                 main.post { if (version == clientVersion) showItem(title, youtube = true) }
             }
@@ -731,9 +750,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 // Small error: play slightly faster/slower (pitch is preserved) until aligned.
                 p.supportsSpeed && abs(error) > SOFT_ERROR_MS ->
                     p.setSpeed((1f - error / 2000f).coerceIn(0.97f, 1.03f))
+                youtube && abs(error) > YOUTUBE_NUDGE_MS -> {
+                    ytPlayer.nudge(error)
+                    resetSync()
+                }
                 else -> p.setSpeed(1f)
             }
-            val state = if (abs(error) <= p.hardSeekThresholdMs) "✅ កំពុង sync" else "⏳ កំពុងតម្រូវ…"
+            val synced = abs(error) <= if (youtube) YOUTUBE_NUDGE_MS else SOFT_ERROR_MS * 2
+            val state = if (synced) "✅ កំពុង sync" else "⏳ កំពុងតម្រូវ…"
             setStatus("$state\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
         }
     }

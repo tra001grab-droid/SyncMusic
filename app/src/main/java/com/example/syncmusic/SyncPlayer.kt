@@ -103,6 +103,10 @@ class YouTubeSyncPlayer(
     private var onProgress: ((percent: Int) -> Unit)? = null
     private var preloading = false
     private var preloadToken = 0
+    private var nudgeToken = 0
+    /** True while temporarily playing at 1.25x/0.75x to close a small gap. */
+    var isNudging = false
+        private set
     private var requested = false
     private var playing = false
     private var playingSince = 0L
@@ -161,9 +165,35 @@ class YouTubeSyncPlayer(
         }
     override val isActive get() = requested
     override val isPlaying get() = playing
-    override val steadyMs get() = if (playing && playingSince > 0) now() - playingSince else 0L
+    override val steadyMs get() = if (playing && playingSince > 0 && !isNudging) now() - playingSince else 0L
     override val supportsSpeed = false
-    override val hardSeekThresholdMs = 300L
+    /** Bigger gaps jump; smaller ones are closed smoothly with [nudge], which doesn't re-buffer. */
+    override val hardSeekThresholdMs = 1000L
+
+    /**
+     * Close a gap of [errorMs] (negative = behind) without jumping: play at 1.25x (or 0.75x) for
+     * |error| / 0.25 ms. Audio pitch is preserved, and the video doesn't need to buffer again.
+     */
+    fun nudge(errorMs: Long) {
+        val p = player ?: return
+        if (isNudging || !playing || errorMs == 0L) return
+        isNudging = true
+        val token = ++nudgeToken
+        p.setPlaybackRate(if (errorMs < 0) PlayerConstants.PlaybackRate.RATE_1_25 else PlayerConstants.PlaybackRate.RATE_0_75)
+        anchors.clear()
+        view.postDelayed({ if (token == nudgeToken) endNudge() }, kotlin.math.abs(errorMs) * 4)
+    }
+
+    private fun endNudge() {
+        if (!isNudging) return
+        nudgeToken++
+        isNudging = false
+        player?.setPlaybackRate(PlayerConstants.PlaybackRate.RATE_1)
+        // Position reports gathered at the other speed don't fit the 1x estimate.
+        anchors.clear()
+        ignoreReportsUntil = now() + 200
+        if (playing) playingSince = now()
+    }
 
     /**
      * Load [videoId] and buffer [PRELOAD_FRACTION] of it (playing muted, since the IFrame player only
@@ -215,6 +245,7 @@ class YouTubeSyncPlayer(
     }
 
     override fun seekTo(ms: Long) {
+        endNudge()
         lastSecond = ms / 1000f
         anchors.clear()
         ignoreReportsUntil = now() + 300
@@ -224,6 +255,7 @@ class YouTubeSyncPlayer(
 
     override fun pause() {
         requested = false
+        endNudge()
         player?.pause()
     }
 
@@ -236,6 +268,7 @@ class YouTubeSyncPlayer(
 
     fun stop() {
         requested = false
+        endNudge()
         preloading = false
         onCued = null
         onProgress = null
