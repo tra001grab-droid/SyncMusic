@@ -22,8 +22,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
 import java.io.File
-import java.net.Inet4Address
-import java.net.NetworkInterface
 import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.abs
@@ -107,7 +105,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             val text = findViewById<EditText>(R.id.manualAddress).text.toString().trim()
             val host = text.substringBefore(":")
             val port = text.substringAfter(":", "").toIntOrNull()
-            if (host.isEmpty() || port == null) setStatus("សូមវាយជាទម្រង់ IP:port") else connect(host, port)
+            if (host.isEmpty() || port == null) setStatus("សូមវាយជាទម្រង់ IP:port") else connect(listOf(host), port)
         }
 
         findViewById<Button>(R.id.btnAddSongs).setOnClickListener { pickAudio.launch(arrayOf("audio/*")) }
@@ -167,6 +165,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 serviceName = "SyncMusic"
                 serviceType = SERVICE_TYPE
                 port = s.port
+                // The address NSD resolves can be the mobile-data one, so publish every LAN address.
+                setAttribute("ips", Network.lanAddresses().joinToString(","))
             }
             val reg = object : NsdManager.RegistrationListener {
                 override fun onServiceRegistered(info: NsdServiceInfo) {}
@@ -182,7 +182,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private fun hostStatus(event: String): String {
         val s = server
-        return "Host: ${localIp() ?: "?"}:${s?.port ?: "?"} · ទូរស័ព្ទភ្ជាប់: ${s?.clientCount ?: 0}\n$event"
+        val addresses = Network.lanAddresses().joinToString("  ") { "$it:${s?.port ?: "?"}" }.ifEmpty { "?" }
+        return "Host: $addresses · ទូរស័ព្ទភ្ជាប់: ${s?.clientCount ?: 0}\n$event"
     }
 
     private fun refreshPlaylist() {
@@ -365,8 +366,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 nsd.resolveService(info, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(info: NsdServiceInfo, code: Int) {}
                     override fun onServiceResolved(info: NsdServiceInfo) {
-                        val host = info.host?.hostAddress ?: return
-                        main.post { connect(host, info.port) }
+                        val advertised = info.attributes["ips"]?.let { String(it).split(",") }.orEmpty()
+                        val resolved = listOfNotNull(info.host?.hostAddress)
+                        val candidates = Network.preferSameSubnet((advertised + resolved).filter { it.isNotBlank() })
+                        if (candidates.isNotEmpty()) main.post { connect(candidates, info.port) }
                     }
                 })
             }
@@ -375,11 +378,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         nsd.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 
-    private fun connect(host: String, port: Int) {
+    private fun connect(hosts: List<String>, port: Int) {
         if (client != null) return
         showPanel(host = false)
         stopDiscovery()
-        client = SyncClient(host, port, cacheDir, this).also { it.start() }
+        client = SyncClient(hosts, port, cacheDir, this).also { it.start() }
     }
 
     private fun stopDiscovery() {
@@ -388,6 +391,19 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
 
     override fun onStatus(text: String) = setStatus(text)
+
+    override fun onDisconnected(reason: String) {
+        main.post {
+            client?.stop()
+            client = null
+            loaded = false
+            hostPlaying = false
+            cancelStart()
+            active?.pause()
+            findViewById<View>(R.id.modePanel).visibility = View.VISIBLE
+            status.text = "$reason\nសូមព្យាយាមម្ដងទៀត ឬវាយ IP:port ដែលបង្ហាញលើ Host"
+        }
+    }
 
     override fun onItemChanging(version: Int, title: String) {
         main.post {
@@ -506,11 +522,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         pendingStart?.let { main.removeCallbacks(it) }
         pendingStart = null
     }
-
-    private fun localIp(): String? = NetworkInterface.getNetworkInterfaces().toList()
-        .flatMap { it.inetAddresses.toList() }
-        .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
-        ?.hostAddress
 
     override fun onDestroy() {
         super.onDestroy()

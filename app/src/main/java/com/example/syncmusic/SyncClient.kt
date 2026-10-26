@@ -14,7 +14,7 @@ import kotlin.concurrent.thread
  * the lowest round-trip time) and converts every host timestamp into local time.
  */
 class SyncClient(
-    private val host: String,
+    private val candidates: List<String>,
     private val port: Int,
     private val cacheDir: File,
     private val listener: Listener,
@@ -28,6 +28,8 @@ class SyncClient(
         fun onPlay(version: Int, posMs: Long, localStartTime: Long)
         fun onHostPause()
         fun onPosition(version: Int, posMs: Long, localTime: Long)
+        /** Connection failed or was lost (not called after [stop]). */
+        fun onDisconnected(reason: String)
     }
 
     private class Sample(val rtt: Long, val offset: Long)
@@ -38,6 +40,8 @@ class SyncClient(
     private var out: PrintWriter? = null
     @Volatile private var running = true
     @Volatile private var currentVersion = 0
+    /** The candidate address that actually accepted the connection. */
+    @Volatile private var host = ""
 
     /** hostTime = localTime + offset */
     @Volatile var offset = 0L
@@ -48,19 +52,37 @@ class SyncClient(
     fun start() {
         thread(name = "sync-client", isDaemon = true) {
             try {
-                val s = Socket()
-                s.connect(InetSocketAddress(host, port), 5000)
+                val s = connectToAny()
                 s.tcpNoDelay = true
                 socket = s
                 out = PrintWriter(s.getOutputStream(), true)
                 listener.onStatus("បានភ្ជាប់ទៅ Host $host")
                 startPinging()
                 s.getInputStream().bufferedReader().forEachLine { handle(it) }
+                if (running) listener.onDisconnected("Host បានផ្ដាច់")
             } catch (e: Exception) {
-                if (running) listener.onStatus("ការភ្ជាប់បរាជ័យ: ${e.message}")
+                if (running) listener.onDisconnected("ការភ្ជាប់បរាជ័យ: ${e.message}")
             }
             running = false
         }
+    }
+
+    /** A host can have several addresses (Wi-Fi, hotspot, mobile data); use the first reachable one. */
+    private fun connectToAny(): Socket {
+        var lastError: Exception? = null
+        for (candidate in candidates) {
+            listener.onStatus("កំពុងភ្ជាប់ទៅ $candidate:$port …")
+            val s = Socket()
+            try {
+                s.connect(InetSocketAddress(candidate, port), 2500)
+                host = candidate
+                return s
+            } catch (e: Exception) {
+                s.close()
+                lastError = e
+            }
+        }
+        throw lastError ?: IllegalStateException("រកមិនឃើញអាសយដ្ឋាន Host")
     }
 
     /** Safe to call from any thread (including main): the write happens on a worker. */
