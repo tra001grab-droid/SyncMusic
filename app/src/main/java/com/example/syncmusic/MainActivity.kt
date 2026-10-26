@@ -21,6 +21,7 @@ import android.widget.ListView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var nowPlaying: TextView
     private lateinit var youtubeView: YouTubePlayerView
     private var multicastLock: WifiManager.MulticastLock? = null
+    private lateinit var searchPanel: SearchPanel
 
     private lateinit var localPlayer: LocalPlayer
     private lateinit var ytPlayer: YouTubeSyncPlayer
@@ -75,10 +77,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (uris.isNotEmpty()) addLocalSongs(uris)
     }
 
-    private val searchYouTube = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val id = result.data?.getStringExtra(SearchActivity.EXTRA_VIDEO_ID) ?: return@registerForActivityResult
-        hostSelect(addYouTubeId(id), autoPlay = true)
-    }
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -122,9 +120,22 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
         findViewById<Button>(R.id.btnAddSongs).setOnClickListener { pickAudio.launch(arrayOf("audio/*")) }
         findViewById<Button>(R.id.btnAddYoutube).setOnClickListener { addYouTube() }
-        findViewById<Button>(R.id.btnSearch).setOnClickListener {
-            searchYouTube.launch(Intent(this, SearchActivity::class.java))
-        }
+        searchPanel = SearchPanel(
+            this,
+            findViewById(R.id.searchPanel),
+            onPick = { id -> hostSelect(addYouTubeId(id), autoPlay = true) },
+            onClose = { showSearch(false) },
+        )
+        searchPanel.hide()
+        findViewById<Button>(R.id.btnSearch).setOnClickListener { showSearch(true) }
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when {
+                    !searchPanel.isOpen -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
+                    !searchPanel.goBack() -> showSearch(false)
+                }
+            }
+        })
         findViewById<Button>(R.id.btnPlay).setOnClickListener { hostPlay() }
         findViewById<Button>(R.id.btnPause).setOnClickListener { hostPause() }
         findViewById<Button>(R.id.btnPrev).setOnClickListener {
@@ -183,6 +194,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<View>(R.id.modePanel).visibility = View.GONE
         findViewById<View>(R.id.hostPanel).visibility = if (host) View.VISIBLE else View.GONE
         findViewById<View>(R.id.clientPanel).visibility = if (host) View.GONE else View.VISIBLE
+    }
+
+    /** Search replaces the playlist area; the player above stays visible so YouTube keeps playing. */
+    private fun showSearch(open: Boolean) {
+        findViewById<View>(R.id.hostPanel).visibility = if (open) View.GONE else View.VISIBLE
+        if (open) searchPanel.show() else searchPanel.hide()
     }
 
     private fun showItem(title: String?, youtube: Boolean) {
@@ -605,6 +622,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onDestroy() {
         super.onDestroy()
         PlaybackService.stop(this)
+        searchPanel.destroy()
         main.removeCallbacksAndMessages(null)
         stopDiscovery()
         registration?.let { runCatching { nsd.unregisterService(it) } }

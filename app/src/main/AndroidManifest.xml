@@ -32,10 +32,6 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".SearchActivity"
-            android:exported="false"
-            android:label="ស្វែងរក YouTube" />
         <service
             android:name=".PlaybackService"
             android:exported="false"
