@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="ជ្រើសរើស៖ ធ្វើជា Host ឬ ចូលរួម"
+        android:textSize="15sp"
+        android:paddingBottom="8dp" />
+
+    <!-- Mode selection -->
+    <LinearLayout
+        android:id="@+id/modePanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/btnHost"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎵 ធ្វើជា Host (ទូរស័ព្ទមេ)" />
+
+        <Button
+            android:id="@+id/btnJoin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📱 ចូលរួម (ស្វែងរក Host ដោយស្វ័យប្រវត្តិ)" />
+
+        <EditText
+            android:id="@+id/manualAddress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="ឬ វាយ IP:port របស់ Host (ឧ. 192.168.1.5:40000)"
+            android:inputType="text" />
+
+        <Button
+            android:id="@+id/btnConnect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ភ្ជាប់ដោយដៃ" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/nowPlaying"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="17sp"
+        android:textStyle="bold"
+        android:paddingBottom="8dp"
+        android:visibility="gone" />
+
+    <!-- Shown only while the current item is a YouTube video. -->
+    <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+        android:id="@+id/youtubeView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        app:enableAutomaticInitialization="false" />
+
+    <!-- Host controls + playlist -->
+    <LinearLayout
+        android:id="@+id/hostPanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnPrev"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="⏮" />
+
+            <Button
+                android:id="@+id/btnPlay"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="▶" />
+
+            <Button
+                android:id="@+id/btnPause"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="⏸" />
+
+            <Button
+                android:id="@+id/btnNext"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="⏭" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnAddSongs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="➕ បន្ថែមបទចម្រៀងពីទូរស័ព្ទ" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/youtubeUrl"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="Link YouTube"
+                android:inputType="textUri" />
+
+            <Button
+                android:id="@+id/btnAddYoutube"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="➕ YouTube" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="8dp"
+            android:text="បញ្ជីបទចម្រៀង (ចុចដើម្បីចាក់ · ចុចយូរដើម្បីលុប)"
+            android:textSize="13sp" />
+
+        <ListView
+            android:id="@+id/playlist"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+
+    <!-- Client calibration -->
+    <LinearLayout
+        android:id="@+id/clientPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/calibrationLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="16dp"
+            android:text="កែតម្រូវពេល (Latency): 0 ms" />
+
+        <SeekBar
+            android:id="@+id/calibration"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="600"
+            android:progress="300" />
+    </LinearLayout>
+</LinearLayout>
