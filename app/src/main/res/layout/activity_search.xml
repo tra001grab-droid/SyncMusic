@@ -30,7 +30,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:text="ចុចលើវីដេអូ ដើម្បីបន្ថែមទៅបញ្ជីបទចម្រៀង"
+        android:text="ចុចលើវីដេអូ ដើម្បីចាក់លើទូរស័ព្ទទាំងអស់ភ្លាមៗ"
         android:textSize="13sp" />
 
     <WebView
@@ -43,5 +43,5 @@
         android:id="@+id/btnDone"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="✔ រួចរាល់" />
+        android:text="✕ បិទ" />
 </LinearLayout>

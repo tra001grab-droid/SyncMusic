@@ -15,17 +15,16 @@ import androidx.appcompat.app.AppCompatActivity
 
 /**
  * Search YouTube without leaving the app: shows the mobile YouTube site and, when the
- * user opens a video, adds its id to the result list instead of playing it here.
+ * user opens a video, returns its id so MainActivity plays it on every phone right away.
  */
 class SearchActivity : AppCompatActivity() {
 
     companion object {
-        const val EXTRA_VIDEO_IDS = "video_ids"
+        const val EXTRA_VIDEO_ID = "video_id"
     }
 
-    private val picked = linkedSetOf<String>()
+    private var picked: String? = null
     private lateinit var web: WebView
-    private lateinit var done: Button
     private var resultsUrl = "https://m.youtube.com/"
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -34,7 +33,6 @@ class SearchActivity : AppCompatActivity() {
         setContentView(R.layout.activity_search)
 
         val query = findViewById<EditText>(R.id.query)
-        done = findViewById(R.id.btnDone)
         web = findViewById(R.id.web)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
@@ -49,13 +47,11 @@ class SearchActivity : AppCompatActivity() {
                     if (url.contains("/results")) resultsUrl = url
                     return
                 }
-                if (picked.add(id)) {
-                    Toast.makeText(this@SearchActivity, "✔ បានបន្ថែមទៅបញ្ជី", Toast.LENGTH_SHORT).show()
-                    done.text = "✔ រួចរាល់ (${picked.size})"
-                } else {
-                    Toast.makeText(this@SearchActivity, "មានក្នុងបញ្ជីរួចហើយ", Toast.LENGTH_SHORT).show()
-                }
-                view.post { if (view.canGoBack()) view.goBack() else view.loadUrl(resultsUrl) }
+                if (picked != null) return
+                picked = id
+                view.stopLoading()
+                Toast.makeText(this@SearchActivity, "▶ កំពុងចាក់…", Toast.LENGTH_SHORT).show()
+                finish()
             }
         }
 
@@ -67,7 +63,7 @@ class SearchActivity : AppCompatActivity() {
         query.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
         }
-        done.setOnClickListener { finish() }
+        findViewById<Button>(R.id.btnDone).setOnClickListener { finish() }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (web.canGoBack()) web.goBack() else finish()
@@ -78,7 +74,7 @@ class SearchActivity : AppCompatActivity() {
     }
 
     override fun finish() {
-        setResult(RESULT_OK, Intent().putStringArrayListExtra(EXTRA_VIDEO_IDS, ArrayList(picked)))
+        picked?.let { setResult(RESULT_OK, Intent().putExtra(EXTRA_VIDEO_ID, it)) }
         super.finish()
     }
 

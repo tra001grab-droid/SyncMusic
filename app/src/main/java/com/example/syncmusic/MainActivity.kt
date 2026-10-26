@@ -1,11 +1,13 @@
 package com.example.syncmusic
 
 import android.content.Context
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -60,6 +62,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var currentIndex = -1
     private var waitForClients: Runnable? = null
     private var hosting = false
+    private var inForeground = false
 
     // Client state (main thread only)
     private var clientVersion = 0
@@ -73,8 +76,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
 
     private val searchYouTube = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        result.data?.getStringArrayListExtra(SearchActivity.EXTRA_VIDEO_IDS)?.forEach { addYouTubeId(it) }
+        val id = result.data?.getStringExtra(SearchActivity.EXTRA_VIDEO_ID) ?: return@registerForActivityResult
+        hostSelect(addYouTubeId(id), autoPlay = true)
     }
+
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     private val positionTicker = object : Runnable {
         override fun run() {
@@ -191,6 +197,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (hosting) return
         hosting = true
         showPanel(host = true)
+        startBackgroundService()
         thread {
             val s = SyncServer { event -> setStatus(hostStatus(event)) }
             s.start()
@@ -265,7 +272,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         addYouTubeId(id)
     }
 
-    private fun addYouTubeId(id: String) {
+    /** Adds a YouTube video to the playlist and returns its index. */
+    private fun addYouTubeId(id: String): Int {
         val item = PlaylistItem.YouTube(id, id)
         playlist.add(item)
         refreshPlaylist()
@@ -274,8 +282,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             main.post {
                 item.title = title
                 refreshPlaylist()
+                if (playlist.getOrNull(currentIndex) === item) showItem(title, youtube = true)
             }
         }
+        return playlist.lastIndex
     }
 
     private fun removeItem(index: Int) {
@@ -421,6 +431,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         showPanel(host = false)
         stopDiscovery()
         client = SyncClient(hosts, port, cacheDir, this).also { it.start() }
+        startBackgroundService()
     }
 
     private fun stopDiscovery() {
@@ -488,7 +499,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (version != clientVersion) return@post
             hostPlaying = true
             val p = active ?: return@post
-            if (!loaded) return@post
+            if (!loaded || !canPlay(p)) return@post
             cancelStart()
             p.setSpeed(1f)
             val delay = localStartTime - now()
@@ -518,7 +529,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (version != clientVersion || !loaded) return@post
             val p = active ?: return@post
             hostPlaying = true
-            if (pendingStart != null) return@post
+            if (pendingStart != null || !canPlay(p)) return@post
             val expected = posMs + (now() - localTime) + calibrationMs
             if (!p.isActive) {
                 p.startFrom(expected)
@@ -546,6 +557,36 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     // ---------------------------------------------------------------- misc
 
+    /** Local songs keep playing with the screen off (see PlaybackService). */
+    private fun startBackgroundService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        PlaybackService.start(this)
+    }
+
+    // YouTube's terms don't allow its player to play in the background, so it only plays while visible.
+    private fun canPlay(p: SyncPlayer) = p !== ytPlayer || inForeground
+
+    override fun onStart() {
+        super.onStart()
+        inForeground = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        inForeground = false
+        if (active === ytPlayer && ytPlayer.isActive) {
+            if (server != null) {
+                hostPause()
+            } else {
+                cancelStart()
+                ytPlayer.pause()
+                status.text = "YouTube ផ្អាកពេលបិទអេក្រង់ — បើកវិញដើម្បីបន្តចាក់"
+            }
+        }
+    }
+
     private fun scheduleStart(delayMs: Long, action: () -> Unit) {
         cancelStart()
         val r = Runnable {
@@ -563,6 +604,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
+        PlaybackService.stop(this)
         main.removeCallbacksAndMessages(null)
         stopDiscovery()
         registration?.let { runCatching { nsd.unregisterService(it) } }
