@@ -15,6 +15,14 @@
         android:textSize="15sp"
         android:paddingBottom="8dp" />
 
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/switchBackground"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="4dp"
+        android:text="▶ ចាក់ YouTube បន្ត ពេលបិទអេក្រង់"
+        android:textSize="14sp" />
+
     <!-- Mode selection -->
     <LinearLayout
         android:id="@+id/modePanel"

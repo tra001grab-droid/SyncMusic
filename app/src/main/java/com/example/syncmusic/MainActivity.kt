@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var waitForClients: Runnable? = null
     private var hosting = false
     private var inForeground = false
+    private var backgroundYouTube = true
 
     // Client state (main thread only)
     private var clientVersion = 0
@@ -112,11 +113,24 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         youtubeView = findViewById(R.id.youtubeView)
         playerContainer = findViewById(R.id.playerContainer)
         findViewById<Button>(R.id.btnFullscreen).setOnClickListener { setFullscreen(!fullscreen) }
-        lifecycle.addObserver(youtubeView)
+        // Not registered as a lifecycle observer: the library would pause the video on every
+        // onStop (screen off). onStop() below decides instead, based on the user's setting.
 
         // Only the host advances the playlist; clients follow its ITEM messages.
         localPlayer = LocalPlayer(this) { onItemEnded() }
         ytPlayer = YouTubeSyncPlayer(youtubeView) { onItemEnded() }
+
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        backgroundYouTube = prefs.getBoolean("yt_background", true)
+        youtubeView.enableBackgroundPlayback(backgroundYouTube)
+        findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchBackground).apply {
+            isChecked = backgroundYouTube
+            setOnCheckedChangeListener { _, checked ->
+                backgroundYouTube = checked
+                youtubeView.enableBackgroundPlayback(checked)
+                prefs.edit().putBoolean("yt_background", checked).apply()
+            }
+        }
 
         val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         multicastLock = wifi.createMulticastLock("syncmusic").apply { setReferenceCounted(false); acquire() }
@@ -648,8 +662,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         PlaybackService.start(this)
     }
 
-    // YouTube's terms don't allow its player to play in the background, so it only plays while visible.
-    private fun canPlay(p: SyncPlayer) = p !== ytPlayer || inForeground
+    // YouTube in the background is optional (switch on the main screen): YouTube's terms don't
+    // allow it, so an app using it can't be published on the Play Store.
+    private fun canPlay(p: SyncPlayer) = p !== ytPlayer || inForeground || backgroundYouTube
 
     override fun onStart() {
         super.onStart()
@@ -659,7 +674,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onStop() {
         super.onStop()
         inForeground = false
-        if (active === ytPlayer && ytPlayer.isActive) {
+        if (active === ytPlayer && ytPlayer.isActive && !backgroundYouTube) {
             if (server != null) {
                 hostPause()
             } else {
