@@ -47,9 +47,11 @@ class SearchPanel(
     private val root: View,
     private val onPick: (videoId: String) -> Unit,
     onClose: () -> Unit,
+    onVoice: () -> Unit,
 ) {
     private val web: WebView = root.findViewById(R.id.web)
     private val offlineBanner: TextView = root.findViewById(R.id.offlineBanner)
+    private val query: EditText = root.findViewById(R.id.query)
     private val connectivity = activity.getSystemService(ConnectivityManager::class.java)
     private var resultsUrl = "https://m.youtube.com/"
     private var lastPick = ""
@@ -109,17 +111,25 @@ class SearchPanel(
             }
         }
 
-        val query = root.findViewById<EditText>(R.id.query)
-        fun search() {
-            if (!checkInternet()) return
-            val q = query.text.toString().trim()
-            if (q.isNotEmpty()) web.loadUrl("https://m.youtube.com/results?search_query=" + Uri.encode(q))
-        }
         root.findViewById<Button>(R.id.btnGo).setOnClickListener { search() }
+        root.findViewById<Button>(R.id.btnVoice).setOnClickListener { onVoice() }
         query.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
         }
         root.findViewById<Button>(R.id.btnDone).setOnClickListener { onClose() }
+    }
+
+    /** Search for [text] (e.g. what the user said with voice search). */
+    fun searchFor(text: String) {
+        query.setText(text)
+        query.setSelection(text.length)
+        search()
+    }
+
+    private fun search() {
+        if (!checkInternet()) return
+        val q = query.text.toString().trim()
+        if (q.isNotEmpty()) web.loadUrl("https://m.youtube.com/results?search_query=" + Uri.encode(q))
     }
 
     fun show() {

@@ -2,6 +2,7 @@ package com.example.syncmusic
 
 import android.content.Context
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.net.Uri
@@ -13,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.speech.RecognizerIntent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -91,6 +93,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
+    private val voiceSearch = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val text = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (!text.isNullOrBlank()) searchPanel.searchFor(text)
+    }
+
     private val positionTicker = object : Runnable {
         override fun run() {
             val s = server ?: return
@@ -151,6 +158,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             findViewById(R.id.searchPanel),
             onPick = { id -> hostSelect(addYouTubeId(id), autoPlay = true) },
             onClose = { showSearch(false) },
+            onVoice = { startVoiceSearch() },
         )
         searchPanel.hide()
         findViewById<Button>(R.id.btnSearch).setOnClickListener { showSearch(true) }
@@ -221,6 +229,21 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<View>(R.id.modePanel).visibility = View.GONE
         findViewById<View>(R.id.hostPanel).visibility = if (host) View.VISIBLE else View.GONE
         findViewById<View>(R.id.clientPanel).visibility = if (host) View.GONE else View.VISIBLE
+    }
+
+    /** Speak a song or singer name in Khmer; uses the phone's speech recognizer (Google). */
+    private fun startVoiceSearch() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "km-KH")
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "km-KH")
+            .putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, "km-KH")
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "និយាយឈ្មោះបទចម្រៀង ឬអ្នកចម្រៀង")
+        try {
+            voiceSearch.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "ទូរស័ព្ទនេះមិនមានមុខងារស្គាល់សំឡេងទេ — សូមដំឡើង/បើក app Google", Toast.LENGTH_LONG).show()
+        }
     }
 
     /** Search replaces the playlist area; the player above stays visible so YouTube keeps playing. */
