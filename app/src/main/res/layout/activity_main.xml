@@ -113,6 +113,12 @@
             android:layout_height="wrap_content"
             android:text="➕ បន្ថែមបទចម្រៀងពីទូរស័ព្ទ" />
 
+        <Button
+            android:id="@+id/btnSearch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔍 ស្វែងរកចម្រៀងលើ YouTube" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

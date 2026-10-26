@@ -1,6 +1,7 @@
 package com.example.syncmusic
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var playlistAdapter: ArrayAdapter<String>
     private var currentIndex = -1
     private var waitForClients: Runnable? = null
+    private var hosting = false
 
     // Client state (main thread only)
     private var clientVersion = 0
@@ -68,6 +70,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) addLocalSongs(uris)
+    }
+
+    private val searchYouTube = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(SearchActivity.EXTRA_VIDEO_IDS)?.forEach { addYouTubeId(it) }
     }
 
     private val positionTicker = object : Runnable {
@@ -110,6 +116,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
         findViewById<Button>(R.id.btnAddSongs).setOnClickListener { pickAudio.launch(arrayOf("audio/*")) }
         findViewById<Button>(R.id.btnAddYoutube).setOnClickListener { addYouTube() }
+        findViewById<Button>(R.id.btnSearch).setOnClickListener {
+            searchYouTube.launch(Intent(this, SearchActivity::class.java))
+        }
         findViewById<Button>(R.id.btnPlay).setOnClickListener { hostPlay() }
         findViewById<Button>(R.id.btnPause).setOnClickListener { hostPause() }
         findViewById<Button>(R.id.btnPrev).setOnClickListener {
@@ -135,6 +144,29 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             override fun onStartTrackingTouch(bar: SeekBar) {}
             override fun onStopTrackingTouch(bar: SeekBar) {}
         })
+
+        handleShare(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
+    }
+
+    /** A YouTube link shared from another app (YouTube "Share" -> Sync Music) goes into the playlist. */
+    private fun handleShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        val id = YouTubeIds.parse(text)
+        when {
+            id == null -> Toast.makeText(this, "Link YouTube មិនត្រឹមត្រូវ", Toast.LENGTH_SHORT).show()
+            client != null -> Toast.makeText(this, "មានតែ Host ទេ ដែលអាចបន្ថែមបទចម្រៀង", Toast.LENGTH_LONG).show()
+            else -> {
+                startHost()
+                addYouTubeId(id)
+                Toast.makeText(this, "✔ បានបន្ថែមទៅបញ្ជី", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun setStatus(text: String) {
@@ -156,6 +188,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     // ---------------------------------------------------------------- Host
 
     private fun startHost() {
+        if (hosting) return
+        hosting = true
         showPanel(host = true)
         thread {
             val s = SyncServer { event -> setStatus(hostStatus(event)) }
@@ -228,6 +262,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             return
         }
         input.text.clear()
+        addYouTubeId(id)
+    }
+
+    private fun addYouTubeId(id: String) {
         val item = PlaylistItem.YouTube(id, id)
         playlist.add(item)
         refreshPlaylist()
