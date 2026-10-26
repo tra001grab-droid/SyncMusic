@@ -2,13 +2,18 @@ package com.example.syncmusic
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -25,6 +30,15 @@ class SearchActivity : AppCompatActivity() {
 
     private var picked: String? = null
     private lateinit var web: WebView
+    private lateinit var offlineBanner: TextView
+    private lateinit var connectivity: ConnectivityManager
+    private var wasOffline = false
+
+    // Reload the page by itself once the phone gets internet back.
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = runOnUiThread { checkInternet() }
+        override fun onLost(network: Network) = runOnUiThread { checkInternet() }
+    }
     private var resultsUrl = "https://m.youtube.com/"
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -34,6 +48,9 @@ class SearchActivity : AppCompatActivity() {
 
         val query = findViewById<EditText>(R.id.query)
         web = findViewById(R.id.web)
+        offlineBanner = findViewById(R.id.offlineBanner)
+        connectivity = getSystemService(ConnectivityManager::class.java)
+        connectivity.registerDefaultNetworkCallback(networkCallback)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         // Don't start videos inside the search page.
@@ -56,6 +73,7 @@ class SearchActivity : AppCompatActivity() {
         }
 
         fun search() {
+            if (!checkInternet()) return
             val q = query.text.toString().trim()
             if (q.isNotEmpty()) web.loadUrl("https://m.youtube.com/results?search_query=" + Uri.encode(q))
         }
@@ -70,7 +88,20 @@ class SearchActivity : AppCompatActivity() {
             }
         })
 
+        checkInternet()
         web.loadUrl(resultsUrl)
+    }
+
+    /** Shows the offline banner when the active network can't actually reach the internet. */
+    private fun checkInternet(): Boolean {
+        val caps = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+        val online = caps != null &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        offlineBanner.visibility = if (online) View.GONE else View.VISIBLE
+        if (online && wasOffline) web.reload()
+        wasOffline = !online
+        return online
     }
 
     override fun finish() {
@@ -79,6 +110,7 @@ class SearchActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
         web.destroy()
         super.onDestroy()
     }

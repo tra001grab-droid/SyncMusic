@@ -33,6 +33,18 @@
         android:text="ចុចលើវីដេអូ ដើម្បីចាក់លើទូរស័ព្ទទាំងអស់ភ្លាមៗ"
         android:textSize="13sp" />
 
+    <!-- Shown when this phone has no working internet connection. -->
+    <TextView
+        android:id="@+id/offlineBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#B71C1C"
+        android:padding="12dp"
+        android:text="⚠ ទូរស័ព្ទនេះមិនមាន Internet ទេ។\n• បើភ្ជាប់ Hotspot របស់ទូរស័ព្ទផ្សេង: ត្រូវបើក Mobile data លើទូរស័ព្ទដែលបើក Hotspot\n• បើភ្ជាប់ Wi-Fi: ពិនិត្យថា Wi-Fi នោះមាន Internet\nពេល Internet ដំណើរការវិញ ទំព័រនឹងផ្ទុកឡើងវិញដោយស្វ័យប្រវត្តិ។"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
     <WebView
         android:id="@+id/web"
         android:layout_width="match_parent"
