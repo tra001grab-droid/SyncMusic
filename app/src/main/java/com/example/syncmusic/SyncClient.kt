@@ -124,7 +124,7 @@ class SyncClient(
             // Written directly (not via sender) so queued messages don't inflate the RTT.
             out?.let { o -> synchronized(o) { o.println("PING ${now()}") } }
             // Burst at the start for a quick estimate, then refresh slowly to follow drift.
-            Thread.sleep(if (count++ < 20) 100L else 1000L)
+            Thread.sleep(if (count++ < 15) 100L else 2000L)
         }
     }
 
@@ -169,8 +169,7 @@ class SyncClient(
     @Synchronized
     private fun addSample(sample: Sample) {
         samples.addLast(sample)
-        // ~1 minute of samples: the lowest round-trip one in it gives the most exact offset.
-        if (samples.size > 60) samples.removeFirst()
+        if (samples.size > 30) samples.removeFirst()
         val best = samples.minBy { it.rtt }
         offset = best.offset
         bestRtt = best.rtt

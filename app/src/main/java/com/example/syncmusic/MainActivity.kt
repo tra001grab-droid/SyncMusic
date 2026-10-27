@@ -55,9 +55,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     companion object {
         private const val SERVICE_TYPE = "_syncmusic._tcp."
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
-        private const val POS_INTERVAL_MS = 500L       // host position report: more often = faster correction
+        private const val POS_INTERVAL_MS = 1000L
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
-        private const val YOUTUBE_NUDGE_MS = 70L       // YouTube gap above this -> 1.25x/0.75x catch-up
+        private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
         private const val SKIP_SETTLE_MS = 700L        // wait this long after the last skip tap
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
@@ -1123,14 +1123,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 return@post
             }
             // Buffering, or just resumed: the position isn't trustworthy yet, so don't react.
-            if (!p.isPlaying || p.steadyMs < if (youtube) 1000L else 300L) {
+            if (!p.isPlaying || p.steadyMs < if (youtube) 1500L else 300L) {
                 setStatus("កំពុង buffer…")
                 return@post
             }
             syncErrors.addLast(p.position - expected)
-            // YouTube positions are noisy: decide on the median of 5 readings (2.5 s), local files 2.
-            if (syncErrors.size > 5) syncErrors.removeFirst()
-            if (syncErrors.size < if (youtube) 5 else 2) return@post
+            if (syncErrors.size > 3) syncErrors.removeFirst()
+            if (syncErrors.size < if (youtube) 3 else 2) return@post
             val error = syncErrors.sorted()[syncErrors.size / 2]
 
             // First steady reading after a jump shows how far buffering left us behind; learn it.

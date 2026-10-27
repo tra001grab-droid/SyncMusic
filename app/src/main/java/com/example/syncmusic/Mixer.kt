@@ -76,13 +76,29 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
     /** Give this to ExoPlayer so the EQ below applies to it. */
     val sessionId: Int = audio.generateAudioSessionId()
 
-    private val playerEq: Equalizer? = runCatching { Equalizer(0, sessionId) }.getOrNull()
-    @Suppress("DEPRECATION")
-    private val globalEq: Equalizer? = runCatching { Equalizer(0, 0) }.getOrNull()
+    /*
+     * Audio effects exist only while in use (EQ not flat / boost above 100%). Even switched off,
+     * an effect on the phone's output can change how sound is routed and add delay on some
+     * phones, which hurt sync; with nothing in use the sound path is exactly as without a mixer.
+     */
+    private var playerEq: Equalizer? = null
+    private var globalEq: Equalizer? = null
+    private var playerBoost: LoudnessEnhancer? = null
+    private var globalBoost: LoudnessEnhancer? = null
 
-    private val playerBoost: LoudnessEnhancer? = runCatching { LoudnessEnhancer(sessionId) }.getOrNull()
-    @Suppress("DEPRECATION")
-    private val globalBoost: LoudnessEnhancer? = runCatching { LoudnessEnhancer(0) }.getOrNull()
+    private class Support(val eq: Boolean, val globalEq: Boolean, val boost: Boolean, val globalBoost: Boolean)
+
+    /** What this phone allows, found once by creating and releasing test effects (for the mixer's note). */
+    private val support by lazy {
+        fun works(make: () -> android.media.audiofx.AudioEffect) = runCatching { make().release() }.isSuccess
+        @Suppress("DEPRECATION")
+        Support(
+            eq = works { Equalizer(0, sessionId) },
+            globalEq = works { Equalizer(0, 0) },
+            boost = works { LoudnessEnhancer(sessionId) },
+            globalBoost = works { LoudnessEnhancer(0) },
+        )
+    }
     /** Volume above 100% (0-100), remembered because the phone only knows "full volume". */
     private var boost = prefs.getInt("boost", 0)
     /** Locked by default; while locked this phone never goes above 100%, whoever asks. */
@@ -99,12 +115,12 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         }
     }.getOrDefault(false)
 
-    val boostAvailable get() = playerBoost != null || globalBoost != null
-    val boostWorksForYouTube get() = globalBoost != null
+    val boostAvailable get() = support.boost || support.globalBoost
+    val boostWorksForYouTube get() = support.globalBoost
 
     /** False when the phone refuses a phone-wide EQ, i.e. EQ won't change YouTube there. */
-    val eqWorksForYouTube get() = globalEq != null
-    val eqAvailable get() = playerEq != null || globalEq != null
+    val eqWorksForYouTube get() = support.globalEq
+    val eqAvailable get() = support.eq || support.globalEq
 
     private var bands: List<Int> = Mix.decode(prefs.getString("mix", null))?.bands ?: List(Mix.BAND_HZ.size) { 0 }
 
@@ -151,10 +167,20 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         boost = percent
         prefs.edit().putInt("boost", percent).apply()
         val gain = percent * Mix.MAX_BOOST_MILLIBELS / 100
+        if (gain <= 0) {
+            runCatching { playerBoost?.release() }
+            runCatching { globalBoost?.release() }
+            playerBoost = null
+            globalBoost = null
+            return
+        }
+        if (playerBoost == null) playerBoost = runCatching { LoudnessEnhancer(sessionId) }.getOrNull()
+        @Suppress("DEPRECATION")
+        if (globalBoost == null) globalBoost = runCatching { LoudnessEnhancer(0) }.getOrNull()
         for (enhancer in listOfNotNull(playerBoost, globalBoost)) {
             runCatching {
                 enhancer.setTargetGain(gain)
-                enhancer.enabled = gain > 0
+                enhancer.enabled = true
             }
         }
     }
@@ -162,6 +188,16 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
     private fun applyEq(levels: List<Int>) {
         bands = levels
         prefs.edit().putString("mix", Mix(bands = levels).encode()).apply()
+        if (levels.all { it == 0 }) {
+            runCatching { playerEq?.release() }
+            runCatching { globalEq?.release() }
+            playerEq = null
+            globalEq = null
+            return
+        }
+        if (playerEq == null) playerEq = runCatching { Equalizer(0, sessionId) }.getOrNull()
+        @Suppress("DEPRECATION")
+        if (globalEq == null) globalEq = runCatching { Equalizer(0, 0) }.getOrNull()
         for (eq in listOfNotNull(playerEq, globalEq)) {
             runCatching {
                 val range = eq.bandLevelRange  // millibels, e.g. [-1500, 1500]
@@ -170,7 +206,7 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
                     val millibels = (levels[nearestBand(hz)] * 100).coerceIn(range[0].toInt(), range[1].toInt())
                     eq.setBandLevel(b.toShort(), millibels.toShort())
                 }
-                eq.enabled = levels.any { it != 0 }
+                eq.enabled = true
             }
         }
     }

@@ -141,67 +141,56 @@ class YouTubeSyncPlayer(
     /** Reports sent before a seek can still arrive just after it; ignore them. */
     private var ignoreReportsUntil = 0L
 
-    private val listener = object : AbstractYouTubePlayerListener() {
-        override fun onReady(youTubePlayer: YouTubePlayer) {
-            player = youTubePlayer
-            pendingVideo?.let { preload(it) }
-        }
-
-        override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
-            durationSec = duration
-        }
-
-        override fun onVideoLoadedFraction(youTubePlayer: YouTubePlayer, loadedFraction: Float) {
-            if (!preloading) {
-                // YouTube doesn't always buffer a long video to 100%, so "90s left" counts too.
-                val nearEnd = durationSec > 0 && durationSec - lastSecond < 90
-                if (requested && playing && !fullyLoadedReported && (loadedFraction >= 0.99f || nearEnd)) {
-                    fullyLoadedReported = true
-                    onFullyLoaded()
-                }
-                return
-            }
-            if (preloadPlayingAt == 0L || now() - preloadPlayingAt < 500) return
-            onProgress?.invoke((loadedFraction * 100).toInt().coerceAtMost(100))
-            if (loadedFraction >= PRELOAD_FRACTION) finishPreload()
-        }
-
-        override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
-            val t = now()
-            if (t < ignoreReportsUntil) return
-            lastSecond = second
-            if (!playing) return
-            anchors.addLast(t to t - (second * 1000).toLong())
-            while (anchors.isNotEmpty() && t - anchors.first().first > 2000) anchors.removeFirst()
-        }
-
-        override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
-            val nowPlaying = state == PlayerConstants.PlayerState.PLAYING
-            if (nowPlaying != playing) {
-                anchors.clear()
-                playingSince = if (nowPlaying) now() else 0L
-            }
-            playing = nowPlaying
-            if (preloading && nowPlaying && preloadPlayingAt == 0L) preloadPlayingAt = now()
-            if (state == PlayerConstants.PlayerState.ENDED && !preloading) onEnded()
-            if (state == PlayerConstants.PlayerState.PAUSED && requested && !preloading) onUnexpectedPause()
-        }
-    }
-
-    private var initialized = false
-
     init {
-        view.enableAutomaticInitialization = false
-    }
+        val listener = object : AbstractYouTubePlayerListener() {
+            override fun onReady(youTubePlayer: YouTubePlayer) {
+                player = youTubePlayer
+                pendingVideo?.let { preload(it) }
+            }
 
-    /**
-     * Load the IFrame player page only when this player is first used: an unused player (e.g. the
-     * spare one when nothing is preloaded) then costs no memory or CPU.
-     */
-    private fun ensureInitialized() {
-        if (initialized) return
-        initialized = true
-        view.initialize(listener, IFramePlayerOptions.Builder(view.context).controls(0).rel(0).build())
+            override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
+                durationSec = duration
+            }
+
+            override fun onVideoLoadedFraction(youTubePlayer: YouTubePlayer, loadedFraction: Float) {
+                if (!preloading) {
+                    // YouTube doesn't always buffer a long video to 100%, so "90s left" counts too.
+                    val nearEnd = durationSec > 0 && durationSec - lastSecond < 90
+                    if (requested && playing && !fullyLoadedReported && (loadedFraction >= 0.99f || nearEnd)) {
+                        fullyLoadedReported = true
+                        onFullyLoaded()
+                    }
+                    return
+                }
+                if (preloadPlayingAt == 0L || now() - preloadPlayingAt < 500) return
+                onProgress?.invoke((loadedFraction * 100).toInt().coerceAtMost(100))
+                if (loadedFraction >= PRELOAD_FRACTION) finishPreload()
+            }
+
+            override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
+                val t = now()
+                if (t < ignoreReportsUntil) return
+                lastSecond = second
+                if (!playing) return
+                anchors.addLast(t to t - (second * 1000).toLong())
+                while (anchors.isNotEmpty() && t - anchors.first().first > 2000) anchors.removeFirst()
+            }
+
+            override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
+                val nowPlaying = state == PlayerConstants.PlayerState.PLAYING
+                if (nowPlaying != playing) {
+                    anchors.clear()
+                    playingSince = if (nowPlaying) now() else 0L
+                }
+                playing = nowPlaying
+                if (preloading && nowPlaying && preloadPlayingAt == 0L) preloadPlayingAt = now()
+                if (state == PlayerConstants.PlayerState.ENDED && !preloading) onEnded()
+                if (state == PlayerConstants.PlayerState.PAUSED && requested && !preloading) onUnexpectedPause()
+            }
+        }
+        val options = IFramePlayerOptions.Builder(view.context).controls(0).rel(0).build()
+        view.enableAutomaticInitialization = false
+        view.initialize(listener, options)
     }
 
     /** Position is reported about every 100ms with jitter; smooth it over the last 2 seconds. */
@@ -258,7 +247,6 @@ class YouTubeSyncPlayer(
         prepared = false
         durationSec = 0f
         fullyLoadedReported = false
-        ensureInitialized()
         if (player == null) pendingVideo = videoId else preload(videoId)
     }
 
