@@ -7,6 +7,97 @@
     android:orientation="vertical"
     android:padding="16dp">
 
+    <!-- Search screen header: logo, name, text and voice search. Shown only while searching. -->
+    <LinearLayout
+        android:id="@+id/searchHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#0F0F0F"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp">
+
+            <TextView
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="@drawable/logo_circle"
+                android:gravity="center"
+                android:paddingStart="3dp"
+                android:text="▶"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingStart="10dp"
+                android:text="សិង្ហនគរ"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnVoice"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="🎤"
+                android:textSize="22sp" />
+
+            <Button
+                android:id="@+id/btnSearchToggle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="🔍"
+                android:textSize="22sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/searchBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingBottom="8dp">
+
+            <EditText
+                android:id="@+id/query"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:background="@drawable/search_field"
+                android:hint="ស្វែងរកបទចម្រៀង ឬអ្នកចម្រៀង"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:paddingHorizontal="16dp"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#AAAAAA" />
+
+            <Button
+                android:id="@+id/btnGo"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="🔍"
+                android:textSize="22sp" />
+        </LinearLayout>
+    </LinearLayout>
+
     <TextView
         android:id="@+id/status"
         android:layout_width="match_parent"

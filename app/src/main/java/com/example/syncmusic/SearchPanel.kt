@@ -9,6 +9,7 @@ import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.graphics.Bitmap
 import android.webkit.WebResourceRequest
 import android.webkit.RenderProcessGoneDetail
@@ -39,7 +40,9 @@ private const val NO_VIDEO_JS = """
   document.addEventListener('playing', function (e) { stop(e.target); }, true);
   document.querySelectorAll('video').forEach(stop);
   var css = document.createElement('style');
-  css.textContent = 'video { visibility: hidden !important; }';
+  // Also hide the site's own top bar and Home/Shorts/You bar: the app's header replaces them.
+  css.textContent = 'video { visibility: hidden !important; } ' +
+    'ytm-mobile-topbar-renderer, header.mobile-topbar-header, ytm-pivot-bar-renderer { display: none !important; }';
   (document.head || document.documentElement).appendChild(css);
 })();
 """
@@ -48,6 +51,8 @@ private const val NO_VIDEO_JS = """
 class SearchPanel(
     private val activity: Activity,
     private val root: View,
+    /** The "សិង្ហនគរ" header with the search box, 🔍 and 🎤. */
+    private val header: View,
     private val onPick: (videoId: String) -> Unit,
     onClose: () -> Unit,
     onVoice: () -> Unit,
@@ -58,7 +63,8 @@ class SearchPanel(
     private val localResults: LinearLayout = root.findViewById(R.id.localResults)
     private var web: WebView = root.findViewById(R.id.web)
     private val offlineBanner: TextView = root.findViewById(R.id.offlineBanner)
-    private val query: EditText = root.findViewById(R.id.query)
+    private val query: EditText = header.findViewById(R.id.query)
+    private val searchBar: View = header.findViewById(R.id.searchBar)
     private val connectivity = activity.getSystemService(ConnectivityManager::class.java)
     private var resultsUrl = "https://m.youtube.com/"
     private var lastPick = ""
@@ -76,8 +82,19 @@ class SearchPanel(
 
     init {
         setUp(web)
-        root.findViewById<Button>(R.id.btnGo).setOnClickListener { search() }
-        root.findViewById<Button>(R.id.btnVoice).setOnClickListener { onVoice() }
+        header.findViewById<Button>(R.id.btnGo).setOnClickListener { search() }
+        header.findViewById<Button>(R.id.btnVoice).setOnClickListener { onVoice() }
+        // 🔍 in the header shows/hides the search box, like the YouTube app.
+        header.findViewById<Button>(R.id.btnSearchToggle).setOnClickListener {
+            if (searchBar.visibility == View.VISIBLE) {
+                searchBar.visibility = View.GONE
+                keyboard(show = false)
+            } else {
+                searchBar.visibility = View.VISIBLE
+                query.requestFocus()
+                keyboard(show = true)
+            }
+        }
         query.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
         }
@@ -149,8 +166,15 @@ class SearchPanel(
         if (started) fresh.loadUrl(resultsUrl)
     }
 
+    private fun keyboard(show: Boolean) {
+        val imm = activity.getSystemService(InputMethodManager::class.java)
+        if (show) imm.showSoftInput(query, InputMethodManager.SHOW_IMPLICIT)
+        else imm.hideSoftInputFromWindow(query.windowToken, 0)
+    }
+
     /** Search for [text] (e.g. what the user said with voice search). */
     fun searchFor(text: String) {
+        searchBar.visibility = View.VISIBLE
         query.setText(text)
         query.setSelection(text.length)
         search()
@@ -160,6 +184,7 @@ class SearchPanel(
     private fun search() {
         val q = query.text.toString().trim()
         if (q.isEmpty()) return
+        keyboard(show = false)
         val matches = findInLibrary(q)
         showLocalResults(q, matches)
         if (matches.isEmpty()) searchYouTube(q)
@@ -197,6 +222,7 @@ class SearchPanel(
 
     fun show() {
         root.visibility = View.VISIBLE
+        header.visibility = View.VISIBLE
         if (!started) {
             started = true
             connectivity.registerDefaultNetworkCallback(networkCallback)
@@ -207,6 +233,8 @@ class SearchPanel(
 
     fun hide() {
         root.visibility = View.GONE
+        header.visibility = View.GONE
+        keyboard(show = false)
     }
 
     /** Back button inside the panel: go back in the page first. Returns false if there's nowhere to go. */

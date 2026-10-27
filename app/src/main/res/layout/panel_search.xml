@@ -4,41 +4,6 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingHorizontal="8dp">
-
-        <EditText
-            android:id="@+id/query"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:hint="ឈ្មោះបទចម្រៀង ឬអ្នកចម្រៀង"
-            android:imeOptions="actionSearch"
-            android:inputType="text" />
-
-        <Button
-            android:id="@+id/btnVoice"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="🎤" />
-
-        <Button
-            android:id="@+id/btnGo"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="🔍" />
-    </LinearLayout>
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingHorizontal="12dp"
-        android:text="ចុចលើវីដេអូ ដើម្បីចាក់លើទូរស័ព្ទទាំងអស់ភ្លាមៗ (នៅក្នុងទំព័រនេះ)"
-        android:textSize="13sp" />
-
     <!-- Matches from the phone's own library (no internet needed); filled in code. -->
     <LinearLayout
         android:id="@+id/localResults"

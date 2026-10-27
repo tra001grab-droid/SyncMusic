@@ -68,6 +68,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var playerContainer: FrameLayout
     private var fullscreen = false
     private var savedVisibility = emptyMap<View, Int>()
+    private var searchHiddenRows = emptyMap<View, Int>()
     private var multicastLock: WifiManager.MulticastLock? = null
     private lateinit var searchPanel: SearchPanel
 
@@ -205,6 +206,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         searchPanel = SearchPanel(
             this,
             findViewById(R.id.searchPanel),
+            findViewById(R.id.searchHeader),
             onPick = { id -> hostSelect(addYouTubeId(id), autoPlay = true) },
             onClose = { showSearch(false) },
             onVoice = { startVoiceSearch() },
@@ -314,9 +316,29 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     /** Search replaces the playlist area; the player above stays visible so YouTube keeps playing. */
     private fun showSearch(open: Boolean) {
+        if (open == searchPanel.isOpen) return
         findViewById<View>(R.id.hostPanel).visibility = if (open) View.GONE else View.VISIBLE
-        if (open) searchPanel.show() else searchPanel.hide()
+        // The "សិង្ហនគរ" header takes the top: hide the app bar and the host's status rows.
+        val rows = listOf(R.id.status, R.id.switchBackground, R.id.nowPlaying).map { findViewById<View>(it) }
+        if (open) {
+            searchHiddenRows = rows.associateWith { it.visibility }
+            rows.forEach { it.visibility = View.GONE }
+            supportActionBar?.hide()
+            searchPanel.show()
+        } else {
+            searchHiddenRows.forEach { (view, visibility) -> view.visibility = visibility }
+            searchHiddenRows = emptyMap()
+            supportActionBar?.show()
+            searchPanel.hide()
+        }
+        applyRootPadding()
         sizePlayer()
+    }
+
+    /** Normal screens have a 16dp margin; the search screen and fullscreen go edge to edge. */
+    private fun applyRootPadding() {
+        val pad = if (fullscreen || searchPanel.isOpen) 0 else (16 * resources.displayMetrics.density).toInt()
+        findViewById<View>(R.id.root).setPadding(pad, pad, pad, pad)
     }
 
     /**
@@ -327,8 +349,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (fullscreen) return
         val metrics = resources.displayMetrics
         val screenWidth = minOf(metrics.widthPixels, metrics.heightPixels)  // the app is portrait
-        val padding = (32 * metrics.density).toInt()
-        val width = if (searchPanel.isOpen) screenWidth * 11 / 20 else screenWidth - padding
+        // Full width on the search screen (no margins there), like the YouTube app.
+        val width = if (searchPanel.isOpen) screenWidth else screenWidth - (32 * metrics.density).toInt()
         // Exact height on the container too: with wrap_content, its match_parent tap guard would
         // stretch it to all free space and push the controls off screen.
         playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
@@ -380,9 +402,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             button.text = "✕"
         } else {
             savedVisibility.forEach { (view, visibility) -> view.visibility = visibility }
-            val pad = (16 * resources.displayMetrics.density).toInt()
-            root.setPadding(pad, pad, pad, pad)
-            supportActionBar?.show()
+            applyRootPadding()
+            if (!searchPanel.isOpen) supportActionBar?.show()
             WindowCompat.setDecorFitsSystemWindows(window, true)
             bars.show(WindowInsetsCompat.Type.systemBars())
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -393,7 +414,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
 
     private fun showItem(title: String?, kind: ItemKind) {
-        nowPlaying.visibility = if (title == null) View.GONE else View.VISIBLE
+        val titleVisibility = if (title == null) View.GONE else View.VISIBLE
+        // On the search screen the title row stays hidden; restore it this way when leaving.
+        if (searchPanel.isOpen) searchHiddenRows = searchHiddenRows + (nowPlaying to titleVisibility)
+        else nowPlaying.visibility = titleVisibility
         nowPlaying.text = when (kind) {
             ItemKind.YOUTUBE -> "▶ YouTube: $title"
             ItemKind.VIDEO -> "🎬 $title"
