@@ -257,6 +257,7 @@ class SearchPanel(
     fun show() {
         root.visibility = View.VISIBLE
         header.visibility = View.VISIBLE
+        web.onResume()
         if (!started) {
             started = true
             connectivity.registerDefaultNetworkCallback(networkCallback)
@@ -285,6 +286,8 @@ class SearchPanel(
         closeSuggestions()
         root.visibility = View.GONE
         header.visibility = View.GONE
+        // Hidden: stop the YouTube page's scripts and animations (this WebView only).
+        web.onPause()
         keyboard(show = false)
     }
 

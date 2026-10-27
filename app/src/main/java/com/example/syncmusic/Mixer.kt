@@ -4,10 +4,14 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioManager
 import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import kotlin.math.abs
 import kotlin.math.ln
 
-/** One phone's sound settings: media volume (0-100), mute, and 5 EQ bands in dB. */
+/**
+ * One phone's sound settings: volume 0-200 (0-100 = media volume, above 100 = boost on top of
+ * full volume), mute, and 5 EQ bands in dB.
+ */
 data class Mix(
     val volume: Int = 70,
     val muted: Boolean = false,
@@ -19,6 +23,9 @@ data class Mix(
     companion object {
         val BAND_HZ = listOf(60, 230, 910, 3600, 14000)
         val BAND_LABELS = listOf("60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz")
+        const val MAX_VOLUME = 200
+        /** Gain added at 200%: +10 dB, which sounds about twice as loud. */
+        const val MAX_BOOST_MILLIBELS = 1000
         const val BAND_MIN_DB = -12
         const val BAND_MAX_DB = 12
 
@@ -34,7 +41,7 @@ data class Mix(
         fun decode(text: String?): Mix? = runCatching {
             val p = text!!.split(",")
             val bands = p[2].split(":").map { it.toInt().coerceIn(BAND_MIN_DB, BAND_MAX_DB) }
-            Mix(p[0].toInt().coerceIn(0, 100), p[1] == "1", (bands + List(BAND_HZ.size) { 0 }).take(BAND_HZ.size))
+            Mix(p[0].toInt().coerceIn(0, MAX_VOLUME), p[1] == "1", (bands + List(BAND_HZ.size) { 0 }).take(BAND_HZ.size))
         }.getOrNull()
     }
 }
@@ -54,6 +61,15 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
     @Suppress("DEPRECATION")
     private val globalEq: Equalizer? = runCatching { Equalizer(0, 0) }.getOrNull()
 
+    private val playerBoost: LoudnessEnhancer? = runCatching { LoudnessEnhancer(sessionId) }.getOrNull()
+    @Suppress("DEPRECATION")
+    private val globalBoost: LoudnessEnhancer? = runCatching { LoudnessEnhancer(0) }.getOrNull()
+    /** Volume above 100% (0-100), remembered because the phone only knows "full volume". */
+    private var boost = prefs.getInt("boost", 0)
+
+    val boostAvailable get() = playerBoost != null || globalBoost != null
+    val boostWorksForYouTube get() = globalBoost != null
+
     /** False when the phone refuses a phone-wide EQ, i.e. EQ won't change YouTube there. */
     val eqWorksForYouTube get() = globalEq != null
     val eqAvailable get() = playerEq != null || globalEq != null
@@ -62,17 +78,23 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
 
     init {
         applyEq(bands)
+        applyBoost(boost)
     }
 
     fun current(): Mix {
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-        val volume = audio.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max
+        val index = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        // Boost only counts while the phone is at full volume (volume keys down = no boost shown).
+        val volume = if (index >= max) 100 + boost else index * 100 / max
         return Mix(volume, audio.isStreamMute(AudioManager.STREAM_MUSIC), bands)
     }
 
     fun apply(mix: Mix) {
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, (mix.volume * max + 50) / 100, 0) }
+        val base = mix.volume.coerceAtMost(100)
+        runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, (base * max + 50) / 100, 0) }
+        val newBoost = (mix.volume - 100).coerceIn(0, 100)
+        if (newBoost != boost) applyBoost(newBoost)
         if (mix.muted != audio.isStreamMute(AudioManager.STREAM_MUSIC)) {
             runCatching {
                 audio.adjustStreamVolume(
@@ -82,6 +104,18 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
             }
         }
         if (mix.bands != bands) applyEq(mix.bands)
+    }
+
+    private fun applyBoost(percent: Int) {
+        boost = percent
+        prefs.edit().putInt("boost", percent).apply()
+        val gain = percent * Mix.MAX_BOOST_MILLIBELS / 100
+        for (enhancer in listOfNotNull(playerBoost, globalBoost)) {
+            runCatching {
+                enhancer.setTargetGain(gain)
+                enhancer.enabled = gain > 0
+            }
+        }
     }
 
     private fun applyEq(levels: List<Int>) {
@@ -105,6 +139,8 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         Mix.BAND_HZ.indices.minBy { abs(ln(Mix.BAND_HZ[it].toDouble()) - ln(hz.coerceAtLeast(1).toDouble())) }
 
     fun release() {
+        runCatching { playerBoost?.release() }
+        runCatching { globalBoost?.release() }
         runCatching { playerEq?.release() }
         runCatching { globalEq?.release() }
     }

@@ -131,7 +131,9 @@ class MixerPanel(
     private fun render() {
         updating = true
         volume.progress = mix.volume
-        volumeLabel.text = "🔊 Volume: ${mix.volume}%" + if (mix.muted) "  (🔇 បិទសំឡេង)" else ""
+        volumeLabel.text = "🔊 Volume: ${mix.volume}%" +
+            (if (mix.volume > 100) "  🚀 Boost" else "") +
+            if (mix.muted) "  (🔇 បិទសំឡេង)" else ""
         mute.text = if (mix.muted) "🔈 បើកសំឡេង" else "🔇 Mute"
         mix.bands.forEachIndexed { i, db ->
             bandSliders[i].progress = db - Mix.BAND_MIN_DB

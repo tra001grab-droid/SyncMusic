@@ -55,9 +55,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     companion object {
         private const val SERVICE_TYPE = "_syncmusic._tcp."
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
-        private const val POS_INTERVAL_MS = 1000L
+        private const val POS_INTERVAL_MS = 500L       // host position report: more often = faster correction
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
-        private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
+        private const val YOUTUBE_NUDGE_MS = 40L       // YouTube gap above this -> 1.25x/0.75x catch-up
         private const val SKIP_SETTLE_MS = 700L        // wait this long after the last skip tap
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
@@ -211,11 +211,17 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             getMix = ::mixerGet,
             setMix = ::mixerSet,
             note = {
-                when {
+                val eq = when {
                     !mixer.eqAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត EQ ទេ — Volume នៅតែដំណើរការ"
                     !mixer.eqWorksForYouTube -> "ℹ EQ ដំណើរការជាមួយបទ/វីដេអូក្នុងទូរស័ព្ទ។ ទូរស័ព្ទនេះមិនអនុញ្ញាតឲ្យ EQ ប្ដូរសំឡេង YouTube ទេ។"
                     else -> "EQ ដំណើរការជាមួយបទក្នុងទូរស័ព្ទ និង YouTube។"
                 }
+                val boost = when {
+                    !mixer.boostAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត Boost លើស 100% ទេ។"
+                    !mixer.boostWorksForYouTube -> "🚀 Boost (101-200%) ដំណើរការជាមួយបទ/វីដេអូក្នុងទូរស័ព្ទ តែមិនមែន YouTube លើទូរស័ព្ទនេះទេ។"
+                    else -> "🚀 Boost (101-200%) ដំណើរការជាមួយបទក្នុងទូរស័ព្ទ និង YouTube។"
+                }
+                "$eq\n\n$boost\n⚠ Boost ខ្លាំងពេកអាចធ្វើឲ្យសំឡេងបែក ឬខូចឧបាល័រ — សូមប្រើដោយប្រុងប្រយ័ត្ន។"
             },
         )
         findViewById<Button>(R.id.btnMixer).setOnClickListener { mixerPanel.show() }
@@ -1122,7 +1128,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 return@post
             }
             // Buffering, or just resumed: the position isn't trustworthy yet, so don't react.
-            if (!p.isPlaying || p.steadyMs < if (youtube) 1500L else 300L) {
+            if (!p.isPlaying || p.steadyMs < if (youtube) 1000L else 300L) {
                 setStatus("កំពុង buffer…")
                 return@post
             }
