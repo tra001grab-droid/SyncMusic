@@ -115,6 +115,77 @@
             android:textSize="22sp" />
     </FrameLayout>
 
+    <!-- Host playback controls: right under the player so they stay visible in the playlist,
+         in search and in fullscreen. -->
+    <LinearLayout
+        android:id="@+id/hostControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#222222"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/btnPrev"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="0dp"
+            android:text="⏮"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnBack5"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="0dp"
+            android:text="⏪5s"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnPlay"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="0dp"
+            android:text="▶"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnPause"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="0dp"
+            android:text="⏸"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnForward5"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="0dp"
+            android:text="5s⏩"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnNext"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="0dp"
+            android:text="⏭"
+            android:textSize="14sp" />
+    </LinearLayout>
+
     <!-- Host controls + playlist -->
     <LinearLayout
         android:id="@+id/hostPanel"
@@ -124,68 +195,12 @@
         android:orientation="vertical"
         android:visibility="gone">
 
-        <LinearLayout
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchAutoplay"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btnPrev"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="⏮" />
-
-            <Button
-                android:id="@+id/btnPlay"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="▶" />
-
-            <Button
-                android:id="@+id/btnPause"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="⏸" />
-
-            <Button
-                android:id="@+id/btnNext"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="⏭" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btnBack5"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="⏪ 5s" />
-
-            <Button
-                android:id="@+id/btnForward5"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="5s ⏩" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchAutoplay"
-                android:layout_width="0dp"
-                android:layout_weight="1.4"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="🔁 Auto play" />
-        </LinearLayout>
+            android:paddingVertical="4dp"
+            android:text="🔁 Auto play (ចាក់បទបន្ទាប់ដោយស្វ័យប្រវត្តិ)" />
 
         <Button
             android:id="@+id/btnAddSongs"

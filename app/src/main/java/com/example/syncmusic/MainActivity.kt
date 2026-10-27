@@ -257,6 +257,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun showPanel(host: Boolean) {
         findViewById<View>(R.id.modePanel).visibility = View.GONE
         findViewById<View>(R.id.hostPanel).visibility = if (host) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.hostControls).visibility = if (host) View.VISIBLE else View.GONE
         findViewById<View>(R.id.clientPanel).visibility = if (host) View.GONE else View.VISIBLE
     }
 
@@ -318,8 +319,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val bars = WindowInsetsControllerCompat(window, window.decorView)
         val button = findViewById<Button>(R.id.btnFullscreen)
         if (on) {
+            // Keep the host's control bar under the video in fullscreen too.
+            val controls = findViewById<View>(R.id.hostControls)
             savedVisibility = (0 until root.childCount).map { root.getChildAt(it) }
-                .filter { it !== playerContainer }
+                .filter { it !== playerContainer && it !== controls }
                 .associateWith { it.visibility }
             savedVisibility.keys.forEach { it.visibility = View.GONE }
             root.setPadding(0, 0, 0, 0)
