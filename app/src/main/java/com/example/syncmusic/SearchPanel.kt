@@ -15,6 +15,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayInputStream
@@ -48,7 +49,11 @@ class SearchPanel(
     private val onPick: (videoId: String) -> Unit,
     onClose: () -> Unit,
     onVoice: () -> Unit,
+    /** Songs in the phone's library matching a query; these play without internet. */
+    private val findInLibrary: (query: String) -> List<PlaylistItem.Local>,
+    private val onPickLocal: (PlaylistItem.Local) -> Unit,
 ) {
+    private val localResults: LinearLayout = root.findViewById(R.id.localResults)
     private val web: WebView = root.findViewById(R.id.web)
     private val offlineBanner: TextView = root.findViewById(R.id.offlineBanner)
     private val query: EditText = root.findViewById(R.id.query)
@@ -126,10 +131,43 @@ class SearchPanel(
         search()
     }
 
+    /** Library first: if the song is already on the phone, offer that copy and don't touch YouTube. */
     private fun search() {
-        if (!checkInternet()) return
         val q = query.text.toString().trim()
-        if (q.isNotEmpty()) web.loadUrl("https://m.youtube.com/results?search_query=" + Uri.encode(q))
+        if (q.isEmpty()) return
+        val matches = findInLibrary(q)
+        showLocalResults(q, matches)
+        if (matches.isEmpty()) searchYouTube(q)
+    }
+
+    private fun searchYouTube(q: String) {
+        if (!checkInternet()) return
+        web.loadUrl("https://m.youtube.com/results?search_query=" + Uri.encode(q))
+    }
+
+    private fun showLocalResults(q: String, matches: List<PlaylistItem.Local>) {
+        localResults.removeAllViews()
+        localResults.visibility = if (matches.isEmpty()) View.GONE else View.VISIBLE
+        if (matches.isEmpty()) return
+        localResults.addView(TextView(activity).apply {
+            text = "📁 មានក្នុងទូរស័ព្ទរួចហើយ (មិនស៊ី Internet):"
+            setPadding(0, 8, 0, 4)
+        })
+        for (item in matches) {
+            localResults.addView(Button(activity).apply {
+                text = (if (item.isVideo) "🎬 " else "🎵 ") + item.title
+                isAllCaps = false
+                setOnClickListener { onPickLocal(item) }
+            })
+        }
+        localResults.addView(Button(activity).apply {
+            text = "🔍 ស្វែងរកលើ YouTube ផងដែរ"
+            isAllCaps = false
+            setOnClickListener {
+                localResults.visibility = View.GONE
+                searchYouTube(q)
+            }
+        })
     }
 
     fun show() {

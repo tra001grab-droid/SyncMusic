@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
  * messages carry it so clients ignore anything about a previous item.
  *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent> | NEXTREADY <videoId>
  *   host -> client : PONG <t0> <hostNow>
- *                    ITEM <version> local <httpPort> <title>
+ *                    ITEM <version> local <httpPort> <fileId> <audio|video> <title>
  *                    ITEM <version> yt <videoId> <title>
  *                    PLAY <version> <posMs> <hostStartTime> | PAUSE
  *                    POS <version> <posMs> <hostTime>
@@ -56,7 +56,7 @@ class SyncServer(private val onEvent: (String) -> Unit) {
         val message = when (item) {
             is PlaylistItem.Local -> {
                 http.setFile(v, item.file)
-                "ITEM $v local ${http.port} $title"
+                "ITEM $v local ${http.port} ${item.id} ${if (item.isVideo) "video" else "audio"} $title"
             }
             is PlaylistItem.YouTube -> {
                 http.setFile(v, null)

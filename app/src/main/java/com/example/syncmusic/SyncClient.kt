@@ -16,14 +16,17 @@ import kotlin.concurrent.thread
 class SyncClient(
     private val candidates: List<String>,
     private val port: Int,
-    private val cacheDir: File,
+    /** Songs received from the host are kept here (by file id) so replays need no transfer. */
+    private val libraryDir: File,
     private val listener: Listener,
 ) {
     interface Listener {
         fun onStatus(text: String)
         /** A new item was announced; stop the current one. */
         fun onItemChanging(version: Int, title: String)
-        fun onLocalItem(version: Int, file: File)
+        fun onLocalItem(version: Int, file: File, isVideo: Boolean)
+        /** A song isn't in the local library yet and is being copied from the host. */
+        fun onDownloading(version: Int)
         fun onYouTubeItem(version: Int, videoId: String)
         fun onPlay(version: Int, posMs: Long, localStartTime: Long)
         fun onHostPause()
@@ -37,6 +40,10 @@ class SyncClient(
     }
 
     private class Sample(val rtt: Long, val offset: Long)
+
+    companion object {
+        private const val LIBRARY_LIMIT_BYTES = 2L * 1024 * 1024 * 1024  // 2 GB
+    }
 
     private val samples = ArrayDeque<Sample>()
     private val sender = Executors.newSingleThreadExecutor()
@@ -123,10 +130,17 @@ class SyncClient(
             "ITEM" -> {
                 val v = p[1].toInt()
                 currentVersion = v
-                listener.onItemChanging(v, p.getOrElse(4) { "" })
                 when (p[2]) {
-                    "local" -> download(v, p[3].toInt())
-                    "yt" -> listener.onYouTubeItem(v, p[3])
+                    "local" -> {
+                        // ITEM <v> local <port> <fileId> <audio|video> <title>
+                        val f = line.split(" ", limit = 7)
+                        listener.onItemChanging(v, f.getOrElse(6) { "" })
+                        fetchSong(v, f[3].toInt(), f[4], f[5] == "video")
+                    }
+                    "yt" -> {
+                        listener.onItemChanging(v, p.getOrElse(4) { "" })
+                        listener.onYouTubeItem(v, p[3])
+                    }
                 }
             }
             "PLAY" -> listener.onPlay(p[1].toInt(), p[2].toLong(), p[3].toLong() - offset)
@@ -146,22 +160,40 @@ class SyncClient(
         bestRtt = best.rtt
     }
 
-    private fun download(version: Int, httpPort: Int) = thread(isDaemon = true) {
+    /** Use the library copy if we have one; otherwise copy it from the host (over Wi-Fi) and keep it. */
+    private fun fetchSong(version: Int, httpPort: Int, fileId: String, isVideo: Boolean) = thread(isDaemon = true) {
+        libraryDir.mkdirs()
+        val target = File(libraryDir, fileId.replace(Regex("[^A-Za-z0-9_.-]"), "_"))
+        if (target.length() > 0) {
+            target.setLastModified(System.currentTimeMillis())
+            listener.onLocalItem(version, target, isVideo)
+            return@thread
+        }
         try {
-            listener.onStatus("កំពុងទាញយកបទចម្រៀងពី Host…")
-            val target = File(cacheDir, "song_$version")
+            listener.onDownloading(version)
+            listener.onStatus("កំពុងទាញយកពី Host…")
+            val partial = File(libraryDir, target.name + ".part")
             val conn = URL("http://$host:$httpPort/song/$version").openConnection() as HttpURLConnection
-            conn.inputStream.use { input -> target.outputStream().use { input.copyTo(it) } }
+            conn.inputStream.use { input -> partial.outputStream().use { input.copyTo(it) } }
             conn.disconnect()
-            // Host may have moved on while we were downloading.
-            if (version != currentVersion) {
-                target.delete()
-                return@thread
-            }
-            cacheDir.listFiles { f -> f.name.startsWith("song_") && f != target }?.forEach { it.delete() }
-            listener.onLocalItem(version, target)
+            partial.renameTo(target)
+            trimLibrary(keep = target)
+            // Host may have moved on while we were downloading; the copy stays in the library.
+            if (version == currentVersion) listener.onLocalItem(version, target, isVideo)
         } catch (e: Exception) {
             if (version == currentVersion) listener.onStatus("ទាញយកបរាជ័យ: ${e.message}")
+        }
+    }
+
+    /** Keep the library under [LIBRARY_LIMIT_BYTES] by dropping the least recently played copies. */
+    private fun trimLibrary(keep: File) {
+        val files = libraryDir.listFiles()?.filter { it.isFile } ?: return
+        var total = files.sumOf { it.length() }
+        for (f in files.sortedBy { it.lastModified() }) {
+            if (total <= LIBRARY_LIMIT_BYTES) break
+            if (f == keep) continue
+            total -= f.length()
+            f.delete()
         }
     }
 

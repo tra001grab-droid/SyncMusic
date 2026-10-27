@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener
@@ -56,6 +57,11 @@ class LocalPlayer(context: Context, onEnded: () -> Unit) : SyncPlayer {
     override val steadyMs get() = if (exo.isPlaying && playingSince > 0) now() - playingSince else 0L
     override val supportsSpeed = true
     override val hardSeekThresholdMs = 100L
+
+    /** Show video (mp4…) in [view]; audio-only files simply show nothing there. */
+    fun attach(view: PlayerView) {
+        view.player = exo
+    }
 
     fun load(file: File) {
         exo.playWhenReady = false

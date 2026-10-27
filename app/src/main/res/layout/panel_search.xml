@@ -39,6 +39,15 @@
         android:text="ចុចលើវីដេអូ ដើម្បីចាក់លើទូរស័ព្ទទាំងអស់ភ្លាមៗ (នៅក្នុងទំព័រនេះ)"
         android:textSize="13sp" />
 
+    <!-- Matches from the phone's own library (no internet needed); filled in code. -->
+    <LinearLayout
+        android:id="@+id/localResults"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="8dp"
+        android:visibility="gone" />
+
     <!-- Shown when this phone has no working internet connection. -->
     <TextView
         android:id="@+id/offlineBanner"

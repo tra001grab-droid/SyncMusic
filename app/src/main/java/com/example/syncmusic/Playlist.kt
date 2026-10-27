@@ -4,13 +4,68 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import org.json.JSONArray
 import org.json.JSONObject
 
 sealed class PlaylistItem {
     abstract var title: String
 
-    data class Local(val file: File, override var title: String) : PlaylistItem()
+    /** A song (mp3…) or video (mp4…) file stored in the host's library. */
+    data class Local(val file: File, override var title: String, val isVideo: Boolean = false) : PlaylistItem() {
+        /** Stable id (the stored file's name); clients keep their copy under it so it's sent only once. */
+        val id: String get() = file.name
+    }
+
     data class YouTube(val videoId: String, override var title: String) : PlaylistItem()
+}
+
+/** Saves the host's playlist, so the library survives closing the app. */
+object PlaylistStore {
+    fun save(target: File, items: List<PlaylistItem>) {
+        val array = JSONArray()
+        for (item in items) {
+            array.put(
+                when (item) {
+                    is PlaylistItem.Local -> JSONObject()
+                        .put("type", "local").put("file", item.file.name)
+                        .put("title", item.title).put("video", item.isVideo)
+                    is PlaylistItem.YouTube -> JSONObject()
+                        .put("type", "yt").put("id", item.videoId).put("title", item.title)
+                }
+            )
+        }
+        val tmp = File(target.path + ".tmp")
+        tmp.writeText(array.toString())
+        tmp.renameTo(target)
+    }
+
+    /** Local files are looked up in [libraryDir]; entries whose file is gone are dropped. */
+    fun load(source: File, libraryDir: File): List<PlaylistItem> = runCatching {
+        val array = JSONArray(source.readText())
+        (0 until array.length()).mapNotNull { i ->
+            val o = array.getJSONObject(i)
+            when (o.getString("type")) {
+                "local" -> File(libraryDir, o.getString("file")).takeIf { it.exists() }
+                    ?.let { PlaylistItem.Local(it, o.getString("title"), o.optBoolean("video")) }
+                "yt" -> PlaylistItem.YouTube(o.getString("id"), o.getString("title"))
+                else -> null
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+/** Finds songs in the local library by (part of) their name. Khmer-friendly: ignores spaces. */
+object LibrarySearch {
+    private fun normalize(text: String) =
+        text.lowercase().replace(Regex("[\\s\u200B\u200C\u200D._\\-|()\\[\\]]+"), "")
+
+    fun find(query: String, items: List<PlaylistItem>, limit: Int = 6): List<PlaylistItem.Local> {
+        val words = query.split(Regex("\\s+")).map(::normalize).filter { it.isNotEmpty() }
+        if (words.isEmpty()) return emptyList()
+        return items.filterIsInstance<PlaylistItem.Local>()
+            .filter { item -> normalize(item.title).let { t -> words.all { it in t } } }
+            .take(limit)
+    }
 }
 
 object YouTubeIds {

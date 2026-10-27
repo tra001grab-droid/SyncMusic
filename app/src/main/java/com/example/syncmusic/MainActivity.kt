@@ -41,6 +41,9 @@ import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
+/** What the player area shows for the current item. */
+private enum class ItemKind { AUDIO, VIDEO, YOUTUBE }
+
 class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     companion object {
@@ -59,6 +62,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var nowPlaying: TextView
     private lateinit var youtubeView: YouTubePlayerView
     private lateinit var youtubeView2: YouTubePlayerView
+    private lateinit var videoView: androidx.media3.ui.PlayerView
     private lateinit var playerContainer: FrameLayout
     private var fullscreen = false
     private var savedVisibility = emptyMap<View, Int>()
@@ -154,6 +158,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
         // Only the host advances the playlist; clients follow its ITEM messages.
         localPlayer = LocalPlayer(this) { onItemEnded() }
+        videoView = findViewById(R.id.videoView)
+        localPlayer.attach(videoView)
         ytPlayer = makeYouTubePlayer(youtubeView)
         ytSpare = makeYouTubePlayer(youtubeView2)
         // Taps on the video would pause YouTube behind the app's back; route them through the app instead.
@@ -190,7 +196,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (host.isEmpty() || port == null) setStatus("សូមវាយជាទម្រង់ IP:port") else connect(listOf(host), port)
         }
 
-        findViewById<Button>(R.id.btnAddSongs).setOnClickListener { pickAudio.launch(arrayOf("audio/*")) }
+        findViewById<Button>(R.id.btnAddSongs).setOnClickListener { pickAudio.launch(arrayOf("audio/*", "video/*")) }
         findViewById<Button>(R.id.btnAddYoutube).setOnClickListener { addYouTube() }
         searchPanel = SearchPanel(
             this,
@@ -198,6 +204,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             onPick = { id -> hostSelect(addYouTubeId(id), autoPlay = true) },
             onClose = { showSearch(false) },
             onVoice = { startVoiceSearch() },
+            findInLibrary = { q -> LibrarySearch.find(q, playlist) },
+            onPickLocal = { item ->
+                val index = playlist.indexOfFirst { it === item }
+                if (index >= 0) hostSelect(index, autoPlay = true)
+            },
         )
         searchPanel.hide()
         sizePlayer()
@@ -378,12 +389,20 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
     }
 
-    private fun showItem(title: String?, youtube: Boolean) {
+    private fun showItem(title: String?, kind: ItemKind) {
         nowPlaying.visibility = if (title == null) View.GONE else View.VISIBLE
-        nowPlaying.text = if (youtube) "▶ YouTube: $title" else "🎵 $title"
-        if (!youtube) setFullscreen(false)
-        playerContainer.visibility = if (youtube) View.VISIBLE else View.GONE
+        nowPlaying.text = when (kind) {
+            ItemKind.YOUTUBE -> "▶ YouTube: $title"
+            ItemKind.VIDEO -> "🎬 $title"
+            ItemKind.AUDIO -> "🎵 $title"
+        }
+        val showPlayer = title != null && kind != ItemKind.AUDIO
+        if (!showPlayer) setFullscreen(false)
+        playerContainer.visibility = if (showPlayer) View.VISIBLE else View.GONE
+        videoView.visibility = if (kind == ItemKind.VIDEO) View.VISIBLE else View.GONE
     }
+
+    private fun kindOf(item: PlaylistItem.Local) = if (item.isVideo) ItemKind.VIDEO else ItemKind.AUDIO
 
     // ---------------------------------------------------------------- Host
 
@@ -391,6 +410,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (hosting) return
         hosting = true
         showPanel(host = true)
+        if (playlist.isEmpty()) {
+            playlist.addAll(PlaylistStore.load(File(filesDir, "playlist.json"), filesDir))
+            refreshPlaylist()
+        }
         startBackgroundService()
         thread {
             val s = SyncServer { event -> setStatus(hostStatus(event)) }
@@ -424,9 +447,15 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun refreshPlaylist() {
         playlistAdapter.clear()
         playlistAdapter.addAll(playlist.mapIndexed { i, item ->
-            val icon = if (item is PlaylistItem.YouTube) "📺" else "🎵"
+            val icon = when {
+                item is PlaylistItem.YouTube -> "📺"
+                item is PlaylistItem.Local && item.isVideo -> "🎬"
+                else -> "🎵"
+            }
             (if (i == currentIndex) "▶ " else "    ") + "$icon ${item.title}"
         })
+        // The playlist is the host's library: keep it across app restarts.
+        if (hosting) runCatching { PlaylistStore.save(File(filesDir, "playlist.json"), playlist) }
     }
 
     private fun addLocalSongs(uris: List<Uri>) {
@@ -434,6 +463,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         thread {
             for (uri in uris) {
                 val title = displayName(uri) ?: "បទចម្រៀង"
+                val isVideo = contentResolver.getType(uri)?.startsWith("video/") == true
                 val file = File(filesDir, "host_${UUID.randomUUID()}")
                 try {
                     contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } }
@@ -442,7 +472,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                     continue
                 }
                 main.post {
-                    playlist.add(PlaylistItem.Local(file, title.substringBeforeLast('.')))
+                    playlist.add(PlaylistItem.Local(file, title.substringBeforeLast('.'), isVideo))
                     refreshPlaylist()
                 }
             }
@@ -476,7 +506,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             main.post {
                 item.title = title
                 refreshPlaylist()
-                if (playlist.getOrNull(currentIndex) === item) showItem(title, youtube = true)
+                if (playlist.getOrNull(currentIndex) === item) showItem(title, ItemKind.YOUTUBE)
             }
         }
         return playlist.lastIndex
@@ -489,7 +519,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             active = null
             ytPlayer.stop()
             resetNext()
-            showItem(null, youtube = false)
+            showItem(null, ItemKind.AUDIO)
         } else if (index < currentIndex) {
             currentIndex--
         }
@@ -512,14 +542,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         when (item) {
             is PlaylistItem.Local -> {
                 ytPlayer.stop()
-                showItem(item.title, youtube = false)
+                showItem(item.title, kindOf(item))
                 localPlayer.load(item.file)
                 active = localPlayer
                 if (autoPlay) startWhenClientsReady(version)
             }
             is PlaylistItem.YouTube -> {
                 localPlayer.pause()
-                showItem(item.title, youtube = true)
+                showItem(item.title, ItemKind.YOUTUBE)
                 active = ytPlayer
                 if (preloaded) {
                     if (autoPlay) startWhenClientsReady(version)
@@ -715,7 +745,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (client != null) return
         showPanel(host = false)
         stopDiscovery()
-        client = SyncClient(hosts, port, cacheDir, this).also { it.start() }
+        client = SyncClient(hosts, port, File(filesDir, "library"), this).also { it.start() }
         startBackgroundService()
     }
 
@@ -725,6 +755,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
 
     override fun onStatus(text: String) = setStatus(text)
+
+    override fun onDownloading(version: Int) {
+        main.post { if (version == clientVersion) setStatus("⏳ កំពុងទាញយកពី Host (លើកដំបូងតែប៉ុណ្ណោះ)…") }
+    }
 
     override fun onDisconnected(reason: String) {
         main.post {
@@ -756,10 +790,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
     }
 
-    override fun onLocalItem(version: Int, file: File) {
+    override fun onLocalItem(version: Int, file: File, isVideo: Boolean) {
         main.post {
             if (version != clientVersion) return@post
-            showItem(clientTitle, youtube = false)
+            showItem(clientTitle, if (isVideo) ItemKind.VIDEO else ItemKind.AUDIO)
             localPlayer.load(file)
             active = localPlayer
             markLoaded(version)
@@ -769,7 +803,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onYouTubeItem(version: Int, videoId: String) {
         main.post {
             if (version != clientVersion) return@post
-            showItem(clientTitle, youtube = true)
+            showItem(clientTitle, ItemKind.YOUTUBE)
             if (ytSpare.isPrepared(videoId)) {
                 // Preloaded in the background as "next": ready right away.
                 swapYouTubePlayers()
@@ -795,7 +829,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             // The host may have announced the item before it knew the title.
             if (clientTitle == videoId) thread {
                 val title = YouTubeIds.fetchTitle(videoId) ?: return@thread
-                main.post { if (version == clientVersion) showItem(title, youtube = true) }
+                main.post { if (version == clientVersion) showItem(title, ItemKind.YOUTUBE) }
             }
         }
     }
@@ -1059,6 +1093,5 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         localPlayer.release()
         youtubeView.release()
         youtubeView2.release()
-        playlist.filterIsInstance<PlaylistItem.Local>().forEach { it.file.delete() }
     }
 }

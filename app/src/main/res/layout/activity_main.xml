@@ -91,6 +91,16 @@
             android:alpha="0"
             app:enableAutomaticInitialization="false" />
 
+        <!-- Video files (mp4…) from the library; covers the YouTube players while shown. -->
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/videoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000"
+            android:visibility="gone"
+            app:resize_mode="fit"
+            app:use_controller="false" />
+
         <!-- "កំពុងទាញយក" with a spinner while the video preloads before everyone starts together. -->
         <LinearLayout
             android:id="@+id/preloadOverlay"
