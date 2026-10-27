@@ -1,0 +1,38 @@
+# Codemagic CI (codemagic.io): builds the iOS client in ios/ on a Mac.
+# The Android app is built by GitHub Actions (.github/workflows/build-apk.yml).
+workflows:
+  ios-unsigned:
+    name: iOS — unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    when:
+      changeset:
+        includes:
+          - "ios/"
+          - "codemagic.yaml"
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+      - name: Generate Xcode project
+        script: cd ios && xcodegen generate
+      - name: Build (unsigned)
+        script: |
+          cd ios
+          xcodebuild -project SyncMusic.xcodeproj -target SyncMusic -configuration Release \
+            -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            SYMROOT="$CM_BUILD_DIR/ios/build" build
+      - name: Package unsigned IPA
+        script: |
+          cd "$CM_BUILD_DIR/ios/build/Release-iphoneos"
+          mkdir -p Payload && cp -R SyncMusic.app Payload/
+          zip -qr "$CM_BUILD_DIR/SyncMusic-unsigned.ipa" Payload
+    artifacts:
+      - SyncMusic-unsigned.ipa

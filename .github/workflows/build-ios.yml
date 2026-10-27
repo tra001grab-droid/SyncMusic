@@ -1,8 +1,8 @@
 name: Build iOS
 
+# Manual only: GitHub didn't provide a macOS runner for this repo; iOS builds run on Codemagic
+# (codemagic.yaml). Start this from the Actions tab to try GitHub again.
 on:
-  push:
-    paths: ["ios/**", ".github/workflows/build-ios.yml"]
   workflow_dispatch:
 
 jobs:
