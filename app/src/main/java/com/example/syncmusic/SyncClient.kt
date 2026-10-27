@@ -101,7 +101,8 @@ class SyncClient(
     /** Safe to call from any thread (including main): the write happens on a worker. */
     fun send(message: String) {
         val o = out ?: return
-        sender.execute { synchronized(o) { o.println(message) } }
+        if (sender.isShutdown) return  // stopped: drop late messages instead of crashing
+        runCatching { sender.execute { synchronized(o) { o.println(message) } } }
     }
 
     fun sendReady(version: Int) = send("READY $version")

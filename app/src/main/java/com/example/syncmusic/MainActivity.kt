@@ -223,7 +223,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             override fun handleOnBackPressed() {
                 when {
                     fullscreen -> setFullscreen(false)
-                    !searchPanel.isOpen -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
+                    // Like music apps: Back on the main screen keeps the session running in the background.
+                    !searchPanel.isOpen -> moveTaskToBack(true)
                     !searchPanel.goBack() -> showSearch(false)
                 }
             }
@@ -1295,8 +1296,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         main.removeCallbacksAndMessages(null)
         stopDiscovery()
         registration?.let { runCatching { nsd.unregisterService(it) } }
-        client?.stop()
-        server?.let { s -> thread { s.stop() } }
+        // Clear these first: player callbacks can still arrive after this and must find nothing to do.
+        val oldClient = client
+        val oldServer = server
+        client = null
+        server = null
+        oldClient?.stop()
+        oldServer?.let { s -> thread { s.stop() } }
         multicastLock?.release()
         localPlayer.release()
         runCatching { ytPlayer.view.release() }

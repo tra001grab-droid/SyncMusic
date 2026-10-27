@@ -100,10 +100,15 @@ class SyncServer(
         clients.filter { it.value != v }.keys.map { progress[it] ?: 0 }
 
     fun broadcast(message: String) {
-        sender.execute {
-            for (out in clients.keys) {
-                synchronized(out) { out.println(message) }
-                if (out.checkError()) clients.remove(out)
+        // After stop() there is no one to send to; late callbacks (e.g. a player finishing
+        // its preload) must not crash the app.
+        if (sender.isShutdown) return
+        runCatching {
+            sender.execute {
+                for (out in clients.keys) {
+                    synchronized(out) { out.println(message) }
+                    if (out.checkError()) clients.remove(out)
+                }
             }
         }
     }
