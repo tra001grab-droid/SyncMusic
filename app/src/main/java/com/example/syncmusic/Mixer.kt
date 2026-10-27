@@ -2,6 +2,7 @@ package com.example.syncmusic
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
@@ -18,9 +19,17 @@ data class Mix(
     val bands: List<Int> = List(BAND_HZ.size) { 0 },
     /** Safety lock: volume above 100% only after this was turned on (with a warning) on purpose. */
     val boostUnlocked: Boolean = false,
+    /**
+     * How late this phone's sound comes out of its speaker compared with the others (ms).
+     * Positive = it plays ahead to make up for it (e.g. a Bluetooth speaker adds ~150-250 ms).
+     */
+    val delayMs: Int = 0,
+    /** Info only: the phone is playing through Bluetooth right now. */
+    val bluetooth: Boolean = false,
 ) {
-    /** Compact form sent between phones: "80,0,3:1:0:0:2,0" (older versions ignore the last field). */
-    fun encode() = "$volume,${if (muted) 1 else 0},${bands.joinToString(":")},${if (boostUnlocked) 1 else 0}"
+    /** Compact form sent between phones: "80,0,3:1:0:0:2,0,150,1" (older versions ignore extra fields). */
+    fun encode() = "$volume,${if (muted) 1 else 0},${bands.joinToString(":")},${if (boostUnlocked) 1 else 0}," +
+        "$delayMs,${if (bluetooth) 1 else 0}"
 
     companion object {
         val BAND_HZ = listOf(60, 230, 910, 3600, 14000)
@@ -28,6 +37,8 @@ data class Mix(
         const val MAX_VOLUME = 200
         /** Gain added at 200%: +10 dB, which sounds about twice as loud. */
         const val MAX_BOOST_MILLIBELS = 1000
+        const val MIN_DELAY_MS = -500
+        const val MAX_DELAY_MS = 500
         const val BAND_MIN_DB = -12
         const val BAND_MAX_DB = 12
 
@@ -47,6 +58,8 @@ data class Mix(
                 p[0].toInt().coerceIn(0, MAX_VOLUME), p[1] == "1",
                 (bands + List(BAND_HZ.size) { 0 }).take(BAND_HZ.size),
                 boostUnlocked = p.getOrNull(3) == "1",
+                delayMs = p.getOrNull(4)?.toIntOrNull()?.coerceIn(MIN_DELAY_MS, MAX_DELAY_MS) ?: 0,
+                bluetooth = p.getOrNull(5) == "1",
             )
         }.getOrNull()
     }
@@ -75,6 +88,17 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
     /** Locked by default; while locked this phone never goes above 100%, whoever asks. */
     private var boostUnlocked = prefs.getBoolean("boost_unlocked", false)
 
+    /** This phone's sound delay compensation (see [Mix.delayMs]); saved. */
+    var delayMs: Int = prefs.getInt("delay_ms", 0)
+        private set
+
+    /** Sound goes to a Bluetooth speaker/earphones (adds delay the app can't measure). */
+    fun bluetoothOutput(): Boolean = runCatching {
+        audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == 26 /* BLE_HEADSET */ || it.type == 27 /* BLE_SPEAKER */
+        }
+    }.getOrDefault(false)
+
     val boostAvailable get() = playerBoost != null || globalBoost != null
     val boostWorksForYouTube get() = globalBoost != null
 
@@ -94,10 +118,14 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         val index = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         // Boost only counts while the phone is at full volume (volume keys down = no boost shown).
         val volume = if (index >= max) 100 + boost else index * 100 / max
-        return Mix(volume, audio.isStreamMute(AudioManager.STREAM_MUSIC), bands, boostUnlocked)
+        return Mix(volume, audio.isStreamMute(AudioManager.STREAM_MUSIC), bands, boostUnlocked, delayMs, bluetoothOutput())
     }
 
     fun apply(mix: Mix) {
+        if (mix.delayMs != delayMs) {
+            delayMs = mix.delayMs
+            prefs.edit().putInt("delay_ms", delayMs).apply()
+        }
         if (mix.boostUnlocked != boostUnlocked) {
             boostUnlocked = mix.boostUnlocked
             prefs.edit().putBoolean("boost_unlocked", boostUnlocked).apply()

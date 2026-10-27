@@ -36,6 +36,8 @@ class MixerPanel(
     private val volumeLabel: TextView = root.findViewById(R.id.mixerVolumeLabel)
     private val mute: Button = root.findViewById(R.id.mixerMute)
     private val boostLock: Button = root.findViewById(R.id.mixerBoostLock)
+    private val delay: SeekBar = root.findViewById(R.id.mixerDelay)
+    private val delayLabel: TextView = root.findViewById(R.id.mixerDelayLabel)
     private val bandSliders = mutableListOf<SeekBar>()
     private val bandValues = mutableListOf<TextView>()
 
@@ -52,6 +54,14 @@ class MixerPanel(
         root.findViewById<Button>(R.id.mixerClose).setOnClickListener { hide() }
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
         mute.setOnClickListener { change(mix.copy(muted = !mix.muted)) }
+        // Slider steps of 10 ms from -500 to +500; the buttons fine-tune by 10 ms.
+        delay.setOnSeekBarChangeListener(listener { step -> change(mix.copy(delayMs = step * 10 + Mix.MIN_DELAY_MS)) })
+        root.findViewById<Button>(R.id.mixerDelayMinus).setOnClickListener {
+            change(mix.copy(delayMs = (mix.delayMs - 10).coerceAtLeast(Mix.MIN_DELAY_MS)))
+        }
+        root.findViewById<Button>(R.id.mixerDelayPlus).setOnClickListener {
+            change(mix.copy(delayMs = (mix.delayMs + 10).coerceAtMost(Mix.MAX_DELAY_MS)))
+        }
         boostLock.setOnClickListener {
             if (mix.boostUnlocked) {
                 // Lock again: back to at most 100% right away.
@@ -149,6 +159,11 @@ class MixerPanel(
 
     private fun render() {
         updating = true
+        delay.progress = (mix.delayMs - Mix.MIN_DELAY_MS) / 10
+        delayLabel.text = "⏱ Delay: " + (if (mix.delayMs > 0) "+" else "") + "${mix.delayMs} ms" +
+            if (mix.bluetooth) "   🎧 Bluetooth (ជាធម្មតា +150 ដល់ +250)" else ""
+        // One delay for every phone makes no sense: only per phone.
+        root.findViewById<View>(R.id.mixerDelaySection).visibility = if (selected == ALL) View.GONE else View.VISIBLE
         // Locked: the slider stops at 100%.
         volume.max = if (mix.boostUnlocked) Mix.MAX_VOLUME else 100
         volume.progress = mix.volume

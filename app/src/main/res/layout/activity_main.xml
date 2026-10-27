@@ -351,7 +351,7 @@
             android:id="@+id/btnMixer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🎚 Mixer — សំឡេង &amp; EQ (គ្រប់ទូរស័ព្ទ)" />
+            android:text="🎚 Mixer — សំឡេង, EQ &amp; ⏱ Delay (គ្រប់ទូរស័ព្ទ)" />
 
         <Button
             android:id="@+id/btnAddSongs"
@@ -408,7 +408,7 @@
         android:layout_weight="1"
         android:visibility="gone" />
 
-    <!-- Client calibration -->
+    <!-- Client: mixer (volume, EQ, ⏱ delay) -->
     <LinearLayout
         android:id="@+id/clientPanel"
         android:layout_width="match_parent"
@@ -420,21 +420,8 @@
             android:id="@+id/btnMixerClient"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🎚 Mixer — សំឡេង &amp; EQ" />
+            android:text="🎚 Mixer — សំឡេង, EQ &amp; ⏱ Delay" />
 
-        <TextView
-            android:id="@+id/calibrationLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="16dp"
-            android:text="កែតម្រូវពេល (Latency): 0 ms" />
-
-        <SeekBar
-            android:id="@+id/calibration"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="600"
-            android:progress="300" />
     </LinearLayout>
 </LinearLayout>
 

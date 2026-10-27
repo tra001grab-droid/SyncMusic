@@ -99,6 +99,58 @@
                 android:layout_height="wrap_content"
                 android:textAllCaps="false" />
 
+            <!-- Per-phone sound delay, set by ear until every phone sounds together. -->
+            <LinearLayout
+                android:id="@+id/mixerDelaySection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/mixerDelayLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="20dp"
+                    android:textColor="#FFFFFF"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/mixerDelayMinus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:text="− 10" />
+
+                    <SeekBar
+                        android:id="@+id/mixerDelay"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_weight="1"
+                        android:max="100" />
+
+                    <Button
+                        android:id="@+id/mixerDelayPlus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:text="+ 10" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ទូរស័ព្ទនេះលឺយឺតជាងគេ (ឧ. ឧបាល័រ Bluetooth) → ចុច ＋\nទូរស័ព្ទនេះលឺលឿនជាងគេ → ចុច −\nកែបន្តិចម្ដងៗ រហូតដល់លឺស៊ីគ្នា។"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

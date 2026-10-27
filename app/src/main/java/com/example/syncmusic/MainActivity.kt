@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
         private const val POS_INTERVAL_MS = 500L       // host position report: more often = faster correction
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
-        private const val YOUTUBE_NUDGE_MS = 40L       // YouTube gap above this -> 1.25x/0.75x catch-up
+        private const val YOUTUBE_NUDGE_MS = 70L       // YouTube gap above this -> 1.25x/0.75x catch-up
         private const val SKIP_SETTLE_MS = 700L        // wait this long after the last skip tap
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
@@ -122,7 +122,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     /** YouTube buffers after every jump; aim this far ahead. Learned per phone. */
     private var youtubeSeekLeadMs = 400L
     private var measuringSeekLead = false
-    private var calibrationMs = 0L
+    /** This phone's sound delay compensation, set in the mixer (⏱ Delay). */
+    private val calibrationMs get() = mixer.delayMs.toLong()
 
     private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) addLocalSongs(uris)
@@ -143,7 +144,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (p.isActive) {
                 // While the host itself is buffering its position isn't moving; reporting it would
                 // tell every client to jump to a wrong time.
-                if (p.isPlaying) s.broadcast("POS ${s.version} ${p.position} ${now()}")
+                // Report what is heard from the host: its media position minus its own sound delay.
+                if (p.isPlaying) s.broadcast("POS ${s.version} ${p.position - calibrationMs} ${now()}")
                 updateNextButton()
                 main.postDelayed(this, POS_INTERVAL_MS)
             }
@@ -284,16 +286,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             setOnItemClickListener { _, _, position, _ -> hostSelect(position, autoPlay = true) }
             setOnItemLongClickListener { _, _, position, _ -> removeItem(position); true }
         }
-
-        val label = findViewById<TextView>(R.id.calibrationLabel)
-        findViewById<SeekBar>(R.id.calibration).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
-                calibrationMs = (progress - 300).toLong()
-                label.text = "កែតម្រូវពេល (Latency): $calibrationMs ms"
-            }
-            override fun onStartTrackingTouch(bar: SeekBar) {}
-            override fun onStopTrackingTouch(bar: SeekBar) {}
-        })
 
         if (intent?.action == Intent.ACTION_SEND) handleShare(intent) else offerLastSession()
     }
@@ -667,7 +659,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         cancelWait()
         val pos = fromMs ?: p.position
         val startAt = now() + START_DELAY_MS
-        s.broadcast("PLAY ${s.version} $pos $startAt")
+        s.broadcast("PLAY ${s.version} ${pos - calibrationMs} $startAt")
         main.removeCallbacks(positionTicker)
         p.cueAt(pos)
         scheduleStart(startAt - now()) {
@@ -885,8 +877,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 reportMix()
             }
             MixerPanel.ALL -> {
-                mixer.apply(mix)
-                s?.clientList()?.forEach { setClientMix(it, mix) }
+                // Volume/EQ for everyone, but each phone keeps its own delay.
+                mixer.apply(mix.copy(delayMs = mixer.delayMs))
+                s?.clientList()?.forEach { c ->
+                    setClientMix(c, mix.copy(delayMs = Mix.decode(c.mix)?.delayMs ?: 0))
+                }
             }
             else -> clientOf(deviceId)?.let { setClientMix(it, mix) }
         }
@@ -1133,8 +1128,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 return@post
             }
             syncErrors.addLast(p.position - expected)
-            if (syncErrors.size > 3) syncErrors.removeFirst()
-            if (syncErrors.size < if (youtube) 3 else 2) return@post
+            // YouTube positions are noisy: decide on the median of 5 readings (2.5 s), local files 2.
+            if (syncErrors.size > 5) syncErrors.removeFirst()
+            if (syncErrors.size < if (youtube) 5 else 2) return@post
             val error = syncErrors.sorted()[syncErrors.size / 2]
 
             // First steady reading after a jump shows how far buffering left us behind; learn it.
