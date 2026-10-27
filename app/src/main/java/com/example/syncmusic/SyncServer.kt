@@ -11,13 +11,14 @@ import kotlin.concurrent.thread
 /**
  * Host side. Line-based text protocol over TCP. Every playlist switch bumps `version`;
  * messages carry it so clients ignore anything about a previous item.
- *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent>
+ *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent> | NEXTREADY <videoId>
  *   host -> client : PONG <t0> <hostNow>
  *                    ITEM <version> local <httpPort> <title>
  *                    ITEM <version> yt <videoId> <title>
  *                    PLAY <version> <posMs> <hostStartTime> | PAUSE
  *                    POS <version> <posMs> <hostTime>
  *                    SKIP <totalMs>   (only shows "⏩ +15s" on screen; the jump itself is a PLAY)
+ *                    NEXT <videoId>   (preload 20% of the upcoming YouTube video in the background)
  */
 class SyncServer(private val onEvent: (String) -> Unit) {
     private val serverSocket = ServerSocket(0)
@@ -26,6 +27,9 @@ class SyncServer(private val onEvent: (String) -> Unit) {
     private val clients = ConcurrentHashMap<PrintWriter, Int>()
     /** Connected clients -> how much of the current YouTube video they have buffered (%). */
     private val progress = ConcurrentHashMap<PrintWriter, Int>()
+    /** Connected clients -> the upcoming video they have preloaded. */
+    private val nextReady = ConcurrentHashMap<PrintWriter, String>()
+    @Volatile private var nextMessage: String? = null
     private val sender = Executors.newSingleThreadExecutor()
     @Volatile private var itemMessage: String? = null
 
@@ -66,6 +70,14 @@ class SyncServer(private val onEvent: (String) -> Unit) {
 
     fun readyCount(v: Int) = clients.values.count { it == v }
 
+    /** Ask every client to preload [videoId] as the next song (null: nothing to preload). */
+    fun announceNext(videoId: String?) {
+        nextMessage = videoId?.let { "NEXT $it" }
+        nextMessage?.let { broadcast(it) }
+    }
+
+    fun nextReadyCount(videoId: String) = clients.keys.count { nextReady[it] == videoId }
+
     /** Loading percent of each client that isn't ready yet for version [v]. */
     fun pendingProgress(v: Int): List<Int> =
         clients.filter { it.value != v }.keys.map { progress[it] ?: 0 }
@@ -85,6 +97,7 @@ class SyncServer(private val onEvent: (String) -> Unit) {
         clients[out] = 0
         onEvent("ទូរស័ព្ទភ្ជាប់: ${socket.inetAddress.hostAddress}")
         itemMessage?.let { synchronized(out) { out.println(it) } }
+        nextMessage?.let { synchronized(out) { out.println(it) } }
         try {
             socket.getInputStream().bufferedReader().forEachLine { line ->
                 val parts = line.split(" ")
@@ -92,6 +105,7 @@ class SyncServer(private val onEvent: (String) -> Unit) {
                     // Reply as fast as possible so round-trip time stays small.
                     "PING" -> synchronized(out) { out.println("PONG ${parts[1]} ${now()}") }
                     "READY" -> parts.getOrNull(1)?.toIntOrNull()?.let { clients[out] = it }
+                    "NEXTREADY" -> parts.getOrNull(1)?.let { nextReady[out] = it }
                     "PROGRESS" -> if (parts.getOrNull(1)?.toIntOrNull() == version) {
                         parts.getOrNull(2)?.toIntOrNull()?.let { progress[out] = it }
                     }
@@ -101,6 +115,7 @@ class SyncServer(private val onEvent: (String) -> Unit) {
         } finally {
             clients.remove(out)
             progress.remove(out)
+            nextReady.remove(out)
             socket.close()
             onEvent("ទូរស័ព្ទផ្ដាច់")
         }

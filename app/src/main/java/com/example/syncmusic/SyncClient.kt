@@ -30,6 +30,8 @@ class SyncClient(
         fun onPosition(version: Int, posMs: Long, localTime: Long)
         /** The host is skipping by [totalMs] (for the on-screen indicator only). */
         fun onSkip(totalMs: Long)
+        /** Preload [videoId] in the background; it's the next song. */
+        fun onNext(videoId: String)
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -97,6 +99,8 @@ class SyncClient(
 
     fun sendProgress(version: Int, percent: Int) = send("PROGRESS $version $percent")
 
+    fun sendNextReady(videoId: String) = send("NEXTREADY $videoId")
+
     private fun startPinging() = thread(name = "sync-ping", isDaemon = true) {
         var count = 0
         while (running) {
@@ -129,6 +133,7 @@ class SyncClient(
             "PAUSE" -> listener.onHostPause()
             "POS" -> listener.onPosition(p[1].toInt(), p[2].toLong(), p[3].toLong() - offset)
             "SKIP" -> listener.onSkip(p[1].toLong())
+            "NEXT" -> listener.onNext(p[1])
         }
     }
 

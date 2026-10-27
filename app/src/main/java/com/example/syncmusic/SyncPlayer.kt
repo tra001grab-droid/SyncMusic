@@ -86,10 +86,12 @@ class LocalPlayer(context: Context, onEnded: () -> Unit) : SyncPlayer {
  * every phone streams the video itself and we only align positions, so precision is lower.
  */
 class YouTubeSyncPlayer(
-    private val view: YouTubePlayerView,
+    val view: YouTubePlayerView,
     onEnded: () -> Unit,
     /** Paused by something other than the app (a tap on the video, another app taking audio…). */
     onUnexpectedPause: () -> Unit,
+    /** The playing video is fully downloaded (or nearly over), so it's a good time to preload the next one. */
+    onFullyLoaded: () -> Unit,
 ) : SyncPlayer {
     companion object {
         /** Buffer this much of the video before reporting ready, so all phones start smoothly. */
@@ -108,6 +110,13 @@ class YouTubeSyncPlayer(
      * can still describe the previous video (often 100%), which used to skip the preload.
      */
     private var preloadPlayingAt = 0L
+    /** Video being loaded / loaded in this player. */
+    var videoId: String? = null
+        private set
+    /** Set once [videoId] is buffered and waiting paused at the start. */
+    private var prepared = false
+    private var durationSec = 0f
+    private var fullyLoadedReported = false
     private var nudgeToken = 0
     /** True while temporarily playing at 1.25x/0.75x to close a small gap. */
     var isNudging = false
@@ -131,8 +140,21 @@ class YouTubeSyncPlayer(
                 pendingVideo?.let { preload(it) }
             }
 
+            override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
+                durationSec = duration
+            }
+
             override fun onVideoLoadedFraction(youTubePlayer: YouTubePlayer, loadedFraction: Float) {
-                if (!preloading || preloadPlayingAt == 0L || now() - preloadPlayingAt < 500) return
+                if (!preloading) {
+                    // YouTube doesn't always buffer a long video to 100%, so "90s left" counts too.
+                    val nearEnd = durationSec > 0 && durationSec - lastSecond < 90
+                    if (requested && playing && !fullyLoadedReported && (loadedFraction >= 0.99f || nearEnd)) {
+                        fullyLoadedReported = true
+                        onFullyLoaded()
+                    }
+                    return
+                }
+                if (preloadPlayingAt == 0L || now() - preloadPlayingAt < 500) return
                 onProgress?.invoke((loadedFraction * 100).toInt().coerceAtMost(100))
                 if (loadedFraction >= PRELOAD_FRACTION) finishPreload()
             }
@@ -213,8 +235,18 @@ class YouTubeSyncPlayer(
         lastSecond = 0f
         onCued = ready
         onProgress = progress
+        this.videoId = videoId
+        prepared = false
+        durationSec = 0f
+        fullyLoadedReported = false
         if (player == null) pendingVideo = videoId else preload(videoId)
     }
+
+    /** True if [id] is already buffered here and waiting at the start (see [load]). */
+    fun isPrepared(id: String) = prepared && videoId == id
+
+    /** True if [id] is being preloaded or is already prepared here. */
+    fun hasVideo(id: String) = videoId == id && (preloading || prepared || pendingVideo == id)
 
     private fun preload(videoId: String) {
         pendingVideo = null
@@ -238,6 +270,7 @@ class YouTubeSyncPlayer(
         anchors.clear()
         ignoreReportsUntil = now() + 300
         onProgress = null
+        prepared = true
         onCued?.invoke()
         onCued = null
     }
@@ -247,6 +280,7 @@ class YouTubeSyncPlayer(
 
     override fun startFrom(ms: Long) {
         requested = true
+        prepared = false
         seekTo(ms)
         player?.play()
     }
@@ -277,6 +311,9 @@ class YouTubeSyncPlayer(
         requested = false
         endNudge()
         preloading = false
+        prepared = false
+        videoId = null
+        pendingVideo = null
         onCued = null
         onProgress = null
         player?.pause()

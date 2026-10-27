@@ -5,6 +5,7 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.net.Uri
 import android.net.nsd.NsdManager
@@ -57,6 +58,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var status: TextView
     private lateinit var nowPlaying: TextView
     private lateinit var youtubeView: YouTubePlayerView
+    private lateinit var youtubeView2: YouTubePlayerView
     private lateinit var playerContainer: FrameLayout
     private var fullscreen = false
     private var savedVisibility = emptyMap<View, Int>()
@@ -64,7 +66,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var searchPanel: SearchPanel
 
     private lateinit var localPlayer: LocalPlayer
+    /** The YouTube player on screen. */
     private lateinit var ytPlayer: YouTubeSyncPlayer
+    /** A second, transparent player that preloads the next song; the two swap when it starts. */
+    private lateinit var ytSpare: YouTubeSyncPlayer
     private var active: SyncPlayer? = null
     private var pendingStart: Runnable? = null
 
@@ -80,6 +85,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var waitForClients: Runnable? = null
     private var hosting = false
     private var autoPlayEnabled = true
+    /** Host: the upcoming YouTube video being preloaded, and whether the host has it ready. */
+    private var nextVideoId: String? = null
+    private var hostNextReady = false
     /** Skip taps add up ("+5s", "+10s", "+15s"); the jump happens once the taps stop. */
     private var pendingSkipMs = 0L
     private val applySkip = Runnable {
@@ -123,6 +131,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 // While the host itself is buffering its position isn't moving; reporting it would
                 // tell every client to jump to a wrong time.
                 if (p.isPlaying) s.broadcast("POS ${s.version} ${p.position} ${now()}")
+                updateNextButton()
                 main.postDelayed(this, POS_INTERVAL_MS)
             }
         }
@@ -137,6 +146,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         status = findViewById(R.id.status)
         nowPlaying = findViewById(R.id.nowPlaying)
         youtubeView = findViewById(R.id.youtubeView)
+        youtubeView2 = findViewById(R.id.youtubeView2)
         playerContainer = findViewById(R.id.playerContainer)
         findViewById<Button>(R.id.btnFullscreen).setOnClickListener { setFullscreen(!fullscreen) }
         // Not registered as a lifecycle observer: the library would pause the video on every
@@ -144,7 +154,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
         // Only the host advances the playlist; clients follow its ITEM messages.
         localPlayer = LocalPlayer(this) { onItemEnded() }
-        ytPlayer = YouTubeSyncPlayer(youtubeView, onEnded = { onItemEnded() }, onUnexpectedPause = { onYouTubePausedByUser() })
+        ytPlayer = makeYouTubePlayer(youtubeView)
+        ytSpare = makeYouTubePlayer(youtubeView2)
         // Taps on the video would pause YouTube behind the app's back; route them through the app instead.
         findViewById<View>(R.id.playerTouchGuard).setOnClickListener {
             when {
@@ -156,11 +167,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         backgroundYouTube = prefs.getBoolean("yt_background", true)
         youtubeView.enableBackgroundPlayback(backgroundYouTube)
+        youtubeView2.enableBackgroundPlayback(backgroundYouTube)
         findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchBackground).apply {
             isChecked = backgroundYouTube
             setOnCheckedChangeListener { _, checked ->
                 backgroundYouTube = checked
                 youtubeView.enableBackgroundPlayback(checked)
+                youtubeView2.enableBackgroundPlayback(checked)
                 prefs.edit().putBoolean("yt_background", checked).apply()
             }
         }
@@ -309,9 +322,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             height = width * 9 / 16
             weight = 0f
         }
-        youtubeView.layoutParams = youtubeView.layoutParams.apply {
-            this.width = ViewGroup.LayoutParams.MATCH_PARENT
-            height = width * 9 / 16
+        for (v in listOf(youtubeView, youtubeView2)) {
+            v.layoutParams = v.layoutParams.apply {
+                this.width = ViewGroup.LayoutParams.MATCH_PARENT
+                height = width * 9 / 16
+            }
         }
     }
 
@@ -340,7 +355,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 height = 0
                 weight = 1f
             }
-            youtubeView.layoutParams = youtubeView.layoutParams.apply { height = ViewGroup.LayoutParams.MATCH_PARENT }
+            for (v in listOf(youtubeView, youtubeView2)) {
+                v.layoutParams = v.layoutParams.apply { height = ViewGroup.LayoutParams.MATCH_PARENT }
+            }
             supportActionBar?.hide()
             WindowCompat.setDecorFitsSystemWindows(window, false)
             bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -471,6 +488,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             currentIndex = -1
             active = null
             ytPlayer.stop()
+            resetNext()
             showItem(null, youtube = false)
         } else if (index < currentIndex) {
             currentIndex--
@@ -487,6 +505,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val item = playlist[index]
         val version = s.setItem(item)
         refreshPlaylist()
+        // Already preloaded as "next" in the spare player? Swap it in and skip the wait.
+        val preloaded = item is PlaylistItem.YouTube && ytSpare.isPrepared(item.videoId)
+        if (preloaded) swapYouTubePlayers()
+        resetNext()
         when (item) {
             is PlaylistItem.Local -> {
                 ytPlayer.stop()
@@ -499,17 +521,19 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 localPlayer.pause()
                 showItem(item.title, youtube = true)
                 active = ytPlayer
-                setStatus(hostStatus("⏳ កំពុងរៀបចំ (ទាញយក ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%)…"))
-                ytPlayer.load(
-                    item.videoId,
-                    ready = {
-                        showPreload(null)
-                        if (autoPlay) startWhenClientsReady(version)
-                    },
-                    progress = { pct ->
-                        showPreload(pct)
-                        setStatus(hostStatus("⏳ Host កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")) },
-                )
+                if (preloaded) {
+                    if (autoPlay) startWhenClientsReady(version)
+                } else {
+                    showPreload(true)
+                    setStatus(hostStatus("⏳ កំពុងទាញយក…"))
+                    ytPlayer.load(
+                        item.videoId,
+                        ready = {
+                            showPreload(false)
+                            if (autoPlay) startWhenClientsReady(version)
+                        },
+                    )
+                }
             }
         }
     }
@@ -527,8 +551,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                     waitForClients = null
                     hostPlay()
                 } else {
-                    val pending = s.pendingProgress(version).joinToString(", ") { "$it%" }
-                    setStatus(hostStatus("⏳ រង់ចាំទូរស័ព្ទ… ($ready/${s.clientCount} រួចរាល់) កំពុងទាញយក: $pending"))
+                    setStatus(hostStatus("⏳ កំពុងទាញយក… ($ready/${s.clientCount} ទូរស័ព្ទរួចរាល់)"))
                     main.postDelayed(this, 200)
                 }
             }
@@ -607,7 +630,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun formatTime(ms: Long) = "%d:%02d".format(ms / 60000, ms / 1000 % 60)
 
     private fun hostStopCurrent() {
-        showPreload(null)
+        showPreload(false)
         main.removeCallbacks(applySkip)
         pendingSkipMs = 0L
         cancelStart()
@@ -721,7 +744,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             clientVersion = version
             clientTitle = title
             loaded = false
-            showPreload(null)
+            showPreload(false)
             hostPlaying = false
             cancelStart()
             resetSync()
@@ -747,20 +770,28 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         main.post {
             if (version != clientVersion) return@post
             showItem(clientTitle, youtube = true)
-            active = ytPlayer
-            var lastSent = -1
-            ytPlayer.load(
-                videoId,
-                ready = { if (version == clientVersion) markLoaded(version) },
-                progress = { pct ->
-                    if (version == clientVersion && pct != lastSent) {
-                        lastSent = pct
-                        showPreload(pct)
-                        client?.sendProgress(version, pct)
-                        setStatus("⏳ កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")
-                    }
-                },
-            )
+            if (ytSpare.isPrepared(videoId)) {
+                // Preloaded in the background as "next": ready right away.
+                swapYouTubePlayers()
+                active = ytPlayer
+                markLoaded(version)
+            } else {
+                ytSpare.stop()
+                active = ytPlayer
+                showPreload(true)
+                setStatus("⏳ កំពុងទាញយក…")
+                var lastSent = -1
+                ytPlayer.load(
+                    videoId,
+                    ready = { if (version == clientVersion) markLoaded(version) },
+                    progress = { pct ->
+                        if (version == clientVersion && pct != lastSent) {
+                            lastSent = pct
+                            client?.sendProgress(version, pct)
+                        }
+                    },
+                )
+            }
             // The host may have announced the item before it knew the title.
             if (clientTitle == videoId) thread {
                 val title = YouTubeIds.fetchTitle(videoId) ?: return@thread
@@ -782,7 +813,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private fun markLoaded(version: Int) {
         loaded = true
-        showPreload(null)
+        showPreload(false)
         client?.sendReady(version)
         // If the host is already playing, the next POS message starts us in sync.
         setStatus("✔ រួចរាល់ — រង់ចាំទូរស័ព្ទផ្សេងទៀត…")
@@ -870,15 +901,96 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
     }
 
-    /** Big "⏳ 12% / 20%" on the video while it preloads; null hides it. */
-    private fun showPreload(percent: Int?) {
-        val overlay = findViewById<TextView>(R.id.preloadOverlay)
-        if (percent == null) {
-            overlay.visibility = View.GONE
-            return
+    /** "កំពុងទាញយក" with a spinner over the video while it preloads. */
+    private fun showPreload(show: Boolean) {
+        findViewById<View>(R.id.preloadOverlay).visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    // ------------------------------------------------------- next-song preload
+
+    private fun makeYouTubePlayer(view: YouTubePlayerView): YouTubeSyncPlayer {
+        lateinit var p: YouTubeSyncPlayer
+        // Only the player on screen may drive the app; the spare one just preloads.
+        p = YouTubeSyncPlayer(
+            view,
+            onEnded = { if (p === ytPlayer) onItemEnded() },
+            onUnexpectedPause = { if (p === ytPlayer) onYouTubePausedByUser() },
+            onFullyLoaded = { if (p === ytPlayer) prepareNext() },
+        )
+        return p
+    }
+
+    /** The spare player (holding the preloaded next song) becomes the one on screen. */
+    private fun swapYouTubePlayers() {
+        val old = ytPlayer
+        ytPlayer = ytSpare
+        ytSpare = old
+        old.stop()
+        ytPlayer.view.alpha = 1f
+        ytSpare.view.alpha = 0f
+    }
+
+    /** Host: the current song is downloaded, so preload 20% of the next one on every phone. */
+    private fun prepareNext() {
+        if (server == null || nextVideoId != null) return
+        val current = playlist.getOrNull(currentIndex) as? PlaylistItem.YouTube ?: return
+        val next = playlist.getOrNull(currentIndex + 1)
+        when {
+            next is PlaylistItem.YouTube -> preloadNext(next.videoId)
+            next == null && autoPlayEnabled -> {
+                // End of the playlist: pick the auto play song now so it can be preloaded too.
+                val index = currentIndex
+                val exclude = playlist.filterIsInstance<PlaylistItem.YouTube>().map { it.videoId }.toSet()
+                thread {
+                    val id = YouTubeIds.fetchNext(current.videoId, current.title, exclude) ?: return@thread
+                    main.post {
+                        if (currentIndex != index || currentIndex != playlist.lastIndex || nextVideoId != null) return@post
+                        addYouTubeId(id)
+                        preloadNext(id)
+                    }
+                }
+            }
         }
-        overlay.text = "⏳ កំពុងទាញយក $percent% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%"
-        overlay.visibility = View.VISIBLE
+    }
+
+    private fun preloadNext(videoId: String) {
+        nextVideoId = videoId
+        hostNextReady = false
+        updateNextButton()
+        ytSpare.load(videoId, ready = {
+            if (nextVideoId == videoId) {
+                hostNextReady = true
+                updateNextButton()
+            }
+        })
+        server?.announceNext(videoId)
+    }
+
+    private fun resetNext() {
+        nextVideoId = null
+        hostNextReady = false
+        ytSpare.stop()
+        server?.announceNext(null)
+        updateNextButton()
+    }
+
+    /** ⏭ turns green once the next song is preloaded on the host and every client. */
+    private fun updateNextButton() {
+        val s = server
+        val id = nextVideoId
+        val ready = s != null && id != null && hostNextReady && s.nextReadyCount(id) >= s.clientCount
+        findViewById<Button>(R.id.btnNext).backgroundTintList =
+            if (ready) ColorStateList.valueOf(0xFF2E7D32.toInt()) else null
+    }
+
+    override fun onNext(videoId: String) {
+        main.post {
+            if (ytSpare.isPrepared(videoId)) {
+                client?.sendNextReady(videoId)
+            } else if (!ytSpare.hasVideo(videoId)) {
+                ytSpare.load(videoId, ready = { client?.sendNextReady(videoId) })
+            }
+        }
     }
 
     private fun resetSync() {
@@ -946,6 +1058,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         multicastLock?.release()
         localPlayer.release()
         youtubeView.release()
+        youtubeView2.release()
         playlist.filterIsInstance<PlaylistItem.Local>().forEach { it.file.delete() }
     }
 }

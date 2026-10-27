@@ -81,18 +81,44 @@
             android:layout_gravity="center"
             app:enableAutomaticInitialization="false" />
 
-        <!-- "⏳ 12% / 20%" while the video preloads before everyone starts together. -->
-        <TextView
+        <!-- Second player that preloads the next song. Kept "visible" but transparent: a hidden
+             WebView may stop buffering. The two swap roles when the next song starts. -->
+        <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+            android:id="@+id/youtubeView2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:alpha="0"
+            app:enableAutomaticInitialization="false" />
+
+        <!-- "កំពុងទាញយក" with a spinner while the video preloads before everyone starts together. -->
+        <LinearLayout
             android:id="@+id/preloadOverlay"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:background="#CC000000"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:padding="12dp"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:visibility="gone">
+
+            <ProgressBar
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:indeterminate="true"
+                android:indeterminateTint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="10dp"
+                android:text="កំពុងទាញយក"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <!-- "⏩ +15s" while skipping; repeated taps add up. -->
         <TextView
