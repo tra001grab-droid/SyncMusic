@@ -106,7 +106,10 @@ class MixerPanel(
             deviceRow.addView(Button(activity).apply {
                 text = label
                 isAllCaps = false
-                backgroundTintList = if (id == selected) ColorStateList.valueOf(0xFF1565C0.toInt()) else null
+                // Selected: white on blue. Others: black on light grey (white text was unreadable there).
+                val isSelected = id == selected
+                backgroundTintList = ColorStateList.valueOf(if (isSelected) 0xFF1565C0.toInt() else 0xFFE0E0E0.toInt())
+                setTextColor(if (isSelected) Color.WHITE else Color.BLACK)
                 setOnClickListener {
                     selected = id
                     refresh(force = true)
