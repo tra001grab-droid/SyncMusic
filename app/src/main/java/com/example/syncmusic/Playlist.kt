@@ -23,6 +23,40 @@ object YouTubeIds {
     fun parse(input: String): String? =
         patterns.firstNotNullOfOrNull { it.find(input.trim())?.groupValues?.get(1) }
 
+    private const val BROWSER_UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    // Older pages list videos as "videoId", newer ones (related list) as "contentId".
+    private val pageVideoId = Regex(""""(?:videoId|contentId)":"([A-Za-z0-9_-]{11})"""")
+
+    private fun fetchPage(url: String): String {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        conn.setRequestProperty("User-Agent", BROWSER_UA)
+        conn.setRequestProperty("Accept-Language", "km,en;q=0.8")
+        try {
+            return conn.inputStream.bufferedReader().readText()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun firstNewId(html: String, exclude: Set<String>): String? =
+        pageVideoId.findAll(html).map { it.groupValues[1] }.firstOrNull { it !in exclude }
+
+    /**
+     * Next video for auto play: the first video in YouTube's related list for [videoId], falling
+     * back to a search for [title]. Skips [exclude]. Blocking, call off the main thread.
+     */
+    fun fetchNext(videoId: String, title: String, exclude: Set<String>): String? {
+        val skip = exclude + videoId
+        runCatching { firstNewId(fetchPage("https://www.youtube.com/watch?v=$videoId"), skip) }
+            .getOrNull()?.let { return it }
+        return runCatching {
+            firstNewId(fetchPage("https://www.youtube.com/results?search_query=" + URLEncoder.encode(title, "UTF-8")), skip)
+        }.getOrNull()
+    }
+
     /** Title via YouTube's public oEmbed endpoint; blocking, call off the main thread. */
     fun fetchTitle(videoId: String): String? = runCatching {
         val target = URLEncoder.encode("https://www.youtube.com/watch?v=$videoId", "UTF-8")

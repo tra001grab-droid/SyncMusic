@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var currentIndex = -1
     private var waitForClients: Runnable? = null
     private var hosting = false
+    private var autoPlayEnabled = true
     private var inForeground = false
     private var backgroundYouTube = true
 
@@ -192,6 +193,17 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<Button>(R.id.btnPause).setOnClickListener { hostPause() }
         findViewById<Button>(R.id.btnPrev).setOnClickListener {
             if (currentIndex > 0) hostSelect(currentIndex - 1, autoPlay = true)
+        }
+        findViewById<Button>(R.id.btnBack5).setOnClickListener { hostSeekBy(-5000) }
+        findViewById<Button>(R.id.btnForward5).setOnClickListener { hostSeekBy(5000) }
+        val settings = getSharedPreferences("settings", MODE_PRIVATE)
+        autoPlayEnabled = settings.getBoolean("autoplay", true)
+        findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAutoplay).apply {
+            isChecked = autoPlayEnabled
+            setOnCheckedChangeListener { _, checked ->
+                autoPlayEnabled = checked
+                settings.edit().putBoolean("autoplay", checked).apply()
+            }
         }
         findViewById<Button>(R.id.btnNext).setOnClickListener {
             if (currentIndex + 1 < playlist.size) hostSelect(currentIndex + 1, autoPlay = true)
@@ -478,8 +490,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 setStatus(hostStatus("⏳ កំពុងរៀបចំ (ទាញយក ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%)…"))
                 ytPlayer.load(
                     item.videoId,
-                    ready = { if (autoPlay) startWhenClientsReady(version) },
-                    progress = { pct -> setStatus(hostStatus("⏳ Host កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")) },
+                    ready = {
+                        showPreload(null)
+                        if (autoPlay) startWhenClientsReady(version)
+                    },
+                    progress = { pct ->
+                        showPreload(pct)
+                        setStatus(hostStatus("⏳ Host កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")) },
                 )
             }
         }
@@ -513,7 +530,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         waitForClients = null
     }
 
-    private fun hostPlay() {
+    private fun hostPlay(fromMs: Long? = null) {
         val s = server ?: return
         if (currentIndex < 0) {
             if (playlist.isNotEmpty()) hostSelect(0, autoPlay = true)
@@ -521,7 +538,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
         val p = active ?: return
         cancelWait()
-        val pos = p.position
+        val pos = fromMs ?: p.position
         val startAt = now() + START_DELAY_MS
         s.broadcast("PLAY ${s.version} $pos $startAt")
         main.removeCallbacks(positionTicker)
@@ -533,7 +550,24 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         setStatus(hostStatus("✅ កំពុង sync"))
     }
 
+    /** ⏪ / ⏩: every phone jumps to the new position at the same moment. */
+    private fun hostSeekBy(deltaMs: Long) {
+        val p = active ?: return
+        if (currentIndex < 0) return
+        val target = (p.position + deltaMs).coerceAtLeast(0L)
+        if (p.isActive) {
+            hostPlay(target)
+        } else {
+            // Paused: just move; everyone starts from here on the next ▶.
+            p.seekTo(target)
+            setStatus(hostStatus("⏸ ${formatTime(target)}"))
+        }
+    }
+
+    private fun formatTime(ms: Long) = "%d:%02d".format(ms / 60000, ms / 1000 % 60)
+
     private fun hostStopCurrent() {
+        showPreload(null)
         cancelStart()
         cancelWait()
         main.removeCallbacks(positionTicker)
@@ -550,9 +584,36 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (server == null) return
         if (currentIndex + 1 < playlist.size) {
             hostSelect(currentIndex + 1, autoPlay = true)
-        } else {
-            hostPause()
-            setStatus(hostStatus("ចប់បញ្ជីបទចម្រៀង"))
+            return
+        }
+        val last = playlist.getOrNull(currentIndex)
+        when {
+            !autoPlayEnabled || last == null -> {
+                hostPause()
+                setStatus(hostStatus("ចប់បញ្ជីបទចម្រៀង"))
+            }
+            last is PlaylistItem.YouTube -> autoPlayNextYouTube(last)
+            // Local songs: start the playlist again.
+            else -> hostSelect(0, autoPlay = true)
+        }
+    }
+
+    /** End of playlist with Auto play on: find a related song on YouTube and keep going. */
+    private fun autoPlayNextYouTube(last: PlaylistItem.YouTube) {
+        val endedIndex = currentIndex
+        val exclude = playlist.filterIsInstance<PlaylistItem.YouTube>().map { it.videoId }.toSet()
+        setStatus(hostStatus("🔁 Auto play: កំពុងរកបទបន្ទាប់…"))
+        thread {
+            val next = YouTubeIds.fetchNext(last.videoId, last.title, exclude)
+            main.post {
+                if (currentIndex != endedIndex) return@post  // user picked something meanwhile
+                if (next != null) {
+                    hostSelect(addYouTubeId(next), autoPlay = true)
+                } else {
+                    // Couldn't reach YouTube's list: repeat the playlist instead of stopping.
+                    hostSelect(0, autoPlay = true)
+                }
+            }
         }
     }
 
@@ -618,6 +679,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             clientVersion = version
             clientTitle = title
             loaded = false
+            showPreload(null)
             hostPlaying = false
             cancelStart()
             resetSync()
@@ -651,6 +713,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 progress = { pct ->
                     if (version == clientVersion && pct != lastSent) {
                         lastSent = pct
+                        showPreload(pct)
                         client?.sendProgress(version, pct)
                         setStatus("⏳ កំពុងទាញយក: $pct% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%")
                     }
@@ -677,6 +740,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private fun markLoaded(version: Int) {
         loaded = true
+        showPreload(null)
         client?.sendReady(version)
         // If the host is already playing, the next POS message starts us in sync.
         setStatus("✔ រួចរាល់ — រង់ចាំទូរស័ព្ទផ្សេងទៀត…")
@@ -762,6 +826,17 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             val state = if (synced) "✅ កំពុង sync" else "⏳ កំពុងតម្រូវ…"
             setStatus("$state\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
         }
+    }
+
+    /** Big "⏳ 12% / 20%" on the video while it preloads; null hides it. */
+    private fun showPreload(percent: Int?) {
+        val overlay = findViewById<TextView>(R.id.preloadOverlay)
+        if (percent == null) {
+            overlay.visibility = View.GONE
+            return
+        }
+        overlay.text = "⏳ កំពុងទាញយក $percent% / ${(YouTubeSyncPlayer.PRELOAD_FRACTION * 100).toInt()}%"
+        overlay.visibility = View.VISIBLE
     }
 
     private fun resetSync() {

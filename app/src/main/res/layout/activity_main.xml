@@ -81,6 +81,19 @@
             android:layout_gravity="center"
             app:enableAutomaticInitialization="false" />
 
+        <!-- "⏳ 12% / 20%" while the video preloads before everyone starts together. -->
+        <TextView
+            android:id="@+id/preloadOverlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="#CC000000"
+            android:padding="12dp"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <!-- Catches taps so they go through the app (host: play/pause for everyone). -->
         <View
             android:id="@+id/playerTouchGuard"
@@ -143,6 +156,35 @@
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
                 android:text="⏭" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnBack5"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="⏪ 5s" />
+
+            <Button
+                android:id="@+id/btnForward5"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="5s ⏩" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchAutoplay"
+                android:layout_width="0dp"
+                android:layout_weight="1.4"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:text="🔁 Auto play" />
         </LinearLayout>
 
         <Button
