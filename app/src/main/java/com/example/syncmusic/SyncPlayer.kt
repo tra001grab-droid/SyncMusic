@@ -248,6 +248,9 @@ class YouTubeSyncPlayer(
         if (player == null) pendingVideo = videoId else preload(videoId)
     }
 
+    /** True while buffering a video muted in the background (see [load]). */
+    val isPreloading get() = preloading
+
     /** True if [id] is already buffered here and waiting at the start (see [load]). */
     fun isPrepared(id: String) = prepared && videoId == id
 

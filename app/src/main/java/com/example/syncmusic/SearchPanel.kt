@@ -7,9 +7,11 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.graphics.Bitmap
 import android.webkit.WebResourceRequest
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -54,7 +56,7 @@ class SearchPanel(
     private val onPickLocal: (PlaylistItem.Local) -> Unit,
 ) {
     private val localResults: LinearLayout = root.findViewById(R.id.localResults)
-    private val web: WebView = root.findViewById(R.id.web)
+    private var web: WebView = root.findViewById(R.id.web)
     private val offlineBanner: TextView = root.findViewById(R.id.offlineBanner)
     private val query: EditText = root.findViewById(R.id.query)
     private val connectivity = activity.getSystemService(ConnectivityManager::class.java)
@@ -73,12 +75,28 @@ class SearchPanel(
     val isOpen get() = root.visibility == View.VISIBLE
 
     init {
+        setUp(web)
+        root.findViewById<Button>(R.id.btnGo).setOnClickListener { search() }
+        root.findViewById<Button>(R.id.btnVoice).setOnClickListener { onVoice() }
+        query.setOnEditorActionListener { _, action, _ ->
+            if (action == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
+        }
+        root.findViewById<Button>(R.id.btnDone).setOnClickListener { onClose() }
+    }
+
+    private fun setUp(web: WebView) {
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = true
         // The search page never plays anything itself (the synced player above does), but YouTube's
         // mobile site auto-plays previews in the results. Block video data and stop any preview.
         web.webViewClient = object : WebViewClient() {
+            // Without this, a crashed/killed WebView renderer makes Android kill the whole app.
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                replaceWebView(view)
+                return true
+            }
+
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val host = request.url.host ?: return null
                 if (!host.endsWith("googlevideo.com")) return null
@@ -115,13 +133,20 @@ class SearchPanel(
                 onPick(id)
             }
         }
+    }
 
-        root.findViewById<Button>(R.id.btnGo).setOnClickListener { search() }
-        root.findViewById<Button>(R.id.btnVoice).setOnClickListener { onVoice() }
-        query.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
-        }
-        root.findViewById<Button>(R.id.btnDone).setOnClickListener { onClose() }
+    /** A WebView whose renderer died can't be used again: swap in a fresh one. */
+    private fun replaceWebView(dead: WebView) {
+        val parent = dead.parent as? ViewGroup ?: return
+        val index = parent.indexOfChild(dead)
+        val params = dead.layoutParams
+        parent.removeView(dead)
+        dead.destroy()
+        val fresh = WebView(activity).apply { id = R.id.web }
+        parent.addView(fresh, index, params)
+        setUp(fresh)
+        web = fresh
+        if (started) fresh.loadUrl(resultsUrl)
     }
 
     /** Search for [text] (e.g. what the user said with voice search). */
