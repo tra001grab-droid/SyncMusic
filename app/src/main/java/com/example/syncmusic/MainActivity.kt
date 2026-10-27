@@ -215,6 +215,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 val index = playlist.indexOfFirst { it === item }
                 if (index >= 0) hostSelect(index, autoPlay = true)
             },
+            suggestionsView = findViewById(R.id.suggestionsList),
         )
         searchPanel.hide()
         sizePlayer()
@@ -222,6 +223,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    searchPanel.closeSuggestions() -> {}
                     fullscreen -> setFullscreen(false)
                     // Like music apps: Back on the main screen keeps the session running in the background.
                     !searchPanel.isOpen -> moveTaskToBack(true)

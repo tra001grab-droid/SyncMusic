@@ -2,12 +2,17 @@ package com.example.syncmusic
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
+import android.widget.FrameLayout
+import android.widget.ListView
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.graphics.Bitmap
@@ -59,12 +64,27 @@ class SearchPanel(
     /** Songs in the phone's library matching a query; these play without internet. */
     private val findInLibrary: (query: String) -> List<PlaylistItem.Local>,
     private val onPickLocal: (PlaylistItem.Local) -> Unit,
+    /** Suggestions list laid over the player and results while typing. */
+    private val suggestionsView: ListView,
 ) {
+    private val history = SearchHistory(activity.getSharedPreferences("settings", Context.MODE_PRIVATE))
     private val localResults: LinearLayout = root.findViewById(R.id.localResults)
     private var web: WebView = root.findViewById(R.id.web)
     private val offlineBanner: TextView = root.findViewById(R.id.offlineBanner)
     private val query: EditText = header.findViewById(R.id.query)
     private val searchBar: View = header.findViewById(R.id.searchBar)
+    private val suggestions = SuggestionList(
+        activity, suggestionsView, history, findInLibrary,
+        onSearch = { searchFor(it) },
+        onPickLocal = { item ->
+            closeSuggestions()
+            onPickLocal(item)
+        },
+        onFill = { text ->
+            query.setText(text)
+            query.setSelection(text.length)
+        },
+    )
     private val connectivity = activity.getSystemService(ConnectivityManager::class.java)
     private var resultsUrl = "https://m.youtube.com/"
     private var lastPick = ""
@@ -98,6 +118,15 @@ class SearchPanel(
         query.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
         }
+        // Like the YouTube app: suggestions while the search box is focused, updated as you type.
+        query.setOnFocusChangeListener { _, focused -> if (focused && isOpen) showSuggestions() else suggestions.hide() }
+        query.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (query.hasFocus() && isOpen) showSuggestions()
+            }
+        })
         root.findViewById<Button>(R.id.btnDone).setOnClickListener { onClose() }
     }
 
@@ -146,6 +175,7 @@ class SearchPanel(
                 if (id == lastPick && now() - lastPickAt < 3000) return
                 lastPick = id
                 lastPickAt = now()
+                history.attachVideo(id)
                 Toast.makeText(activity, "▶ កំពុងចាក់…", Toast.LENGTH_SHORT).show()
                 onPick(id)
             }
@@ -184,6 +214,8 @@ class SearchPanel(
     private fun search() {
         val q = query.text.toString().trim()
         if (q.isEmpty()) return
+        history.add(q)
+        closeSuggestions()
         keyboard(show = false)
         val matches = findInLibrary(q)
         showLocalResults(q, matches)
@@ -231,7 +263,24 @@ class SearchPanel(
         checkInternet()
     }
 
+    private fun showSuggestions() {
+        // Start right under the header, covering the player and the results.
+        suggestionsView.layoutParams = (suggestionsView.layoutParams as FrameLayout.LayoutParams).apply {
+            topMargin = header.bottom
+        }
+        suggestions.update(query.text.toString())
+    }
+
+    /** Back button / search started: close the suggestions. Returns false if they weren't open. */
+    fun closeSuggestions(): Boolean {
+        if (!suggestions.isShowing) return false
+        suggestions.hide()
+        query.clearFocus()
+        return true
+    }
+
     fun hide() {
+        closeSuggestions()
         root.visibility = View.GONE
         header.visibility = View.GONE
         keyboard(show = false)
