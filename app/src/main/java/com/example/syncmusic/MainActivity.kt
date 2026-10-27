@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val POS_INTERVAL_MS = 1000L
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
         private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
+        private const val SKIP_SETTLE_MS = 700L        // wait this long after the last skip tap
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
 
@@ -79,6 +80,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var waitForClients: Runnable? = null
     private var hosting = false
     private var autoPlayEnabled = true
+    /** Skip taps add up ("+5s", "+10s", "+15s"); the jump happens once the taps stop. */
+    private var pendingSkipMs = 0L
+    private val applySkip = Runnable {
+        val total = pendingSkipMs
+        pendingSkipMs = 0L
+        if (total != 0L) hostSeekBy(total)
+    }
+    private val hideSkip = Runnable { findViewById<View>(R.id.skipOverlay).visibility = View.GONE }
     private var inForeground = false
     private var backgroundYouTube = true
 
@@ -194,8 +203,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<Button>(R.id.btnPrev).setOnClickListener {
             if (currentIndex > 0) hostSelect(currentIndex - 1, autoPlay = true)
         }
-        findViewById<Button>(R.id.btnBack5).setOnClickListener { hostSeekBy(-5000) }
-        findViewById<Button>(R.id.btnForward5).setOnClickListener { hostSeekBy(5000) }
+        findViewById<Button>(R.id.btnBack5).setOnClickListener { queueSkip(-5000) }
+        findViewById<Button>(R.id.btnForward5).setOnClickListener { queueSkip(5000) }
         val settings = getSharedPreferences("settings", MODE_PRIVATE)
         autoPlayEnabled = settings.getBoolean("autoplay", true)
         findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAutoplay).apply {
@@ -553,6 +562,34 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         setStatus(hostStatus("✅ កំពុង sync"))
     }
 
+    private fun queueSkip(deltaMs: Long) {
+        if (currentIndex < 0) return
+        pendingSkipMs += deltaMs
+        showSkip(pendingSkipMs)
+        server?.broadcast("SKIP $pendingSkipMs")
+        main.removeCallbacks(applySkip)
+        main.postDelayed(applySkip, SKIP_SETTLE_MS)
+    }
+
+    /** "⏩ +15s" / "⏪ -10s" over the video (or a toast when no video is shown). */
+    private fun showSkip(totalMs: Long) {
+        val text = if (totalMs >= 0) "⏩ +${totalMs / 1000}s" else "⏪ ${totalMs / 1000}s"
+        if (playerContainer.visibility != View.VISIBLE) {
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+            return
+        }
+        findViewById<TextView>(R.id.skipOverlay).apply {
+            this.text = text
+            visibility = View.VISIBLE
+        }
+        main.removeCallbacks(hideSkip)
+        main.postDelayed(hideSkip, SKIP_SETTLE_MS + 800)
+    }
+
+    override fun onSkip(totalMs: Long) {
+        main.post { showSkip(totalMs) }
+    }
+
     /** ⏪ / ⏩: every phone jumps to the new position at the same moment. */
     private fun hostSeekBy(deltaMs: Long) {
         val p = active ?: return
@@ -571,6 +608,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private fun hostStopCurrent() {
         showPreload(null)
+        main.removeCallbacks(applySkip)
+        pendingSkipMs = 0L
         cancelStart()
         cancelWait()
         main.removeCallbacks(positionTicker)

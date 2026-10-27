@@ -28,6 +28,8 @@ class SyncClient(
         fun onPlay(version: Int, posMs: Long, localStartTime: Long)
         fun onHostPause()
         fun onPosition(version: Int, posMs: Long, localTime: Long)
+        /** The host is skipping by [totalMs] (for the on-screen indicator only). */
+        fun onSkip(totalMs: Long)
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -126,6 +128,7 @@ class SyncClient(
             "PLAY" -> listener.onPlay(p[1].toInt(), p[2].toLong(), p[3].toLong() - offset)
             "PAUSE" -> listener.onHostPause()
             "POS" -> listener.onPosition(p[1].toInt(), p[2].toLong(), p[3].toLong() - offset)
+            "SKIP" -> listener.onSkip(p[1].toLong())
         }
     }
 

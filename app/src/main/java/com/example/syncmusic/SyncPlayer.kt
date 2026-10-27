@@ -103,6 +103,11 @@ class YouTubeSyncPlayer(
     private var onProgress: ((percent: Int) -> Unit)? = null
     private var preloading = false
     private var preloadToken = 0
+    /**
+     * When the preloaded video actually started playing. Until then, loaded-fraction reports
+     * can still describe the previous video (often 100%), which used to skip the preload.
+     */
+    private var preloadPlayingAt = 0L
     private var nudgeToken = 0
     /** True while temporarily playing at 1.25x/0.75x to close a small gap. */
     var isNudging = false
@@ -127,7 +132,7 @@ class YouTubeSyncPlayer(
             }
 
             override fun onVideoLoadedFraction(youTubePlayer: YouTubePlayer, loadedFraction: Float) {
-                if (!preloading) return
+                if (!preloading || preloadPlayingAt == 0L || now() - preloadPlayingAt < 500) return
                 onProgress?.invoke((loadedFraction * 100).toInt().coerceAtMost(100))
                 if (loadedFraction >= PRELOAD_FRACTION) finishPreload()
             }
@@ -148,6 +153,7 @@ class YouTubeSyncPlayer(
                     playingSince = if (nowPlaying) now() else 0L
                 }
                 playing = nowPlaying
+                if (preloading && nowPlaying && preloadPlayingAt == 0L) preloadPlayingAt = now()
                 if (state == PlayerConstants.PlayerState.ENDED && !preloading) onEnded()
                 if (state == PlayerConstants.PlayerState.PAUSED && requested && !preloading) onUnexpectedPause()
             }
@@ -214,6 +220,7 @@ class YouTubeSyncPlayer(
         pendingVideo = null
         val p = player ?: return
         preloading = true
+        preloadPlayingAt = 0L
         val token = ++preloadToken
         p.mute()
         p.loadVideo(videoId, 0f)

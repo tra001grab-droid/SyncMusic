@@ -17,6 +17,7 @@ import kotlin.concurrent.thread
  *                    ITEM <version> yt <videoId> <title>
  *                    PLAY <version> <posMs> <hostStartTime> | PAUSE
  *                    POS <version> <posMs> <hostTime>
+ *                    SKIP <totalMs>   (only shows "⏩ +15s" on screen; the jump itself is a PLAY)
  */
 class SyncServer(private val onEvent: (String) -> Unit) {
     private val serverSocket = ServerSocket(0)

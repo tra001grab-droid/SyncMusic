@@ -94,6 +94,20 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
+        <!-- "⏩ +15s" while skipping; repeated taps add up. -->
+        <TextView
+            android:id="@+id/skipOverlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="#CC000000"
+            android:paddingHorizontal="20dp"
+            android:paddingVertical="10dp"
+            android:textColor="#FFFFFF"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <!-- Catches taps so they go through the app (host: play/pause for everyone). -->
         <View
             android:id="@+id/playerTouchGuard"
