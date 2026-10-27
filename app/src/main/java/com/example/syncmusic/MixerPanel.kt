@@ -1,6 +1,7 @@
 package com.example.syncmusic
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.view.Gravity
@@ -34,6 +35,7 @@ class MixerPanel(
     private val volume: SeekBar = root.findViewById(R.id.mixerVolume)
     private val volumeLabel: TextView = root.findViewById(R.id.mixerVolumeLabel)
     private val mute: Button = root.findViewById(R.id.mixerMute)
+    private val boostLock: Button = root.findViewById(R.id.mixerBoostLock)
     private val bandSliders = mutableListOf<SeekBar>()
     private val bandValues = mutableListOf<TextView>()
 
@@ -50,6 +52,23 @@ class MixerPanel(
         root.findViewById<Button>(R.id.mixerClose).setOnClickListener { hide() }
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
         mute.setOnClickListener { change(mix.copy(muted = !mix.muted)) }
+        boostLock.setOnClickListener {
+            if (mix.boostUnlocked) {
+                // Lock again: back to at most 100% right away.
+                change(mix.copy(boostUnlocked = false, volume = mix.volume.coerceAtMost(100)))
+            } else {
+                AlertDialog.Builder(activity)
+                    .setTitle("⚠ បើក Boost (101-200%)?")
+                    .setMessage(
+                        "Boost ធ្វើឲ្យសំឡេងខ្លាំងលើសពីកម្រិតធម្មតារបស់ទូរស័ព្ទ។\n\n" +
+                            "• អាចធ្វើឲ្យសំឡេងបែក\n• ប្រើយូរៗ អាចធ្វើឲ្យខូចឧបាល័រ\n• កុំប្រើជាមួយកាសស្ដាប់ត្រចៀក\n\n" +
+                            "ចាប់ផ្ដើមពីកម្រិតទាប ហើយឡើងបន្តិចម្ដងៗ។"
+                    )
+                    .setPositiveButton("🔓 យល់ព្រម បើក") { _, _ -> change(mix.copy(boostUnlocked = true)) }
+                    .setNegativeButton("បោះបង់", null)
+                    .show()
+            }
+        }
 
         val presets: LinearLayout = root.findViewById(R.id.mixerPresets)
         for ((name, levels) in Mix.PRESETS) {
@@ -130,7 +149,13 @@ class MixerPanel(
 
     private fun render() {
         updating = true
+        // Locked: the slider stops at 100%.
+        volume.max = if (mix.boostUnlocked) Mix.MAX_VOLUME else 100
         volume.progress = mix.volume
+        boostLock.text = if (mix.boostUnlocked) "🔓 Boost កំពុងបើក (ដល់ 200%) — ចុចដើម្បីចាក់សោវិញ"
+            else "🔒 Boost ត្រូវបានចាក់សោ (អតិបរមា 100%) — ចុចដើម្បីបើក"
+        boostLock.backgroundTintList = ColorStateList.valueOf(if (mix.boostUnlocked) 0xFFB71C1C.toInt() else 0xFF424242.toInt())
+        boostLock.setTextColor(Color.WHITE)
         volumeLabel.text = "🔊 Volume: ${mix.volume}%" +
             (if (mix.volume > 100) "  🚀 Boost" else "") +
             if (mix.muted) "  (🔇 បិទសំឡេង)" else ""

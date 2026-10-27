@@ -16,9 +16,11 @@ data class Mix(
     val volume: Int = 70,
     val muted: Boolean = false,
     val bands: List<Int> = List(BAND_HZ.size) { 0 },
+    /** Safety lock: volume above 100% only after this was turned on (with a warning) on purpose. */
+    val boostUnlocked: Boolean = false,
 ) {
-    /** Compact form sent between phones: "80,0,3:1:0:0:2". */
-    fun encode() = "$volume,${if (muted) 1 else 0},${bands.joinToString(":")}"
+    /** Compact form sent between phones: "80,0,3:1:0:0:2,0" (older versions ignore the last field). */
+    fun encode() = "$volume,${if (muted) 1 else 0},${bands.joinToString(":")},${if (boostUnlocked) 1 else 0}"
 
     companion object {
         val BAND_HZ = listOf(60, 230, 910, 3600, 14000)
@@ -41,7 +43,11 @@ data class Mix(
         fun decode(text: String?): Mix? = runCatching {
             val p = text!!.split(",")
             val bands = p[2].split(":").map { it.toInt().coerceIn(BAND_MIN_DB, BAND_MAX_DB) }
-            Mix(p[0].toInt().coerceIn(0, MAX_VOLUME), p[1] == "1", (bands + List(BAND_HZ.size) { 0 }).take(BAND_HZ.size))
+            Mix(
+                p[0].toInt().coerceIn(0, MAX_VOLUME), p[1] == "1",
+                (bands + List(BAND_HZ.size) { 0 }).take(BAND_HZ.size),
+                boostUnlocked = p.getOrNull(3) == "1",
+            )
         }.getOrNull()
     }
 }
@@ -66,6 +72,8 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
     private val globalBoost: LoudnessEnhancer? = runCatching { LoudnessEnhancer(0) }.getOrNull()
     /** Volume above 100% (0-100), remembered because the phone only knows "full volume". */
     private var boost = prefs.getInt("boost", 0)
+    /** Locked by default; while locked this phone never goes above 100%, whoever asks. */
+    private var boostUnlocked = prefs.getBoolean("boost_unlocked", false)
 
     val boostAvailable get() = playerBoost != null || globalBoost != null
     val boostWorksForYouTube get() = globalBoost != null
@@ -78,7 +86,7 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
 
     init {
         applyEq(bands)
-        applyBoost(boost)
+        applyBoost(if (boostUnlocked) boost else 0)
     }
 
     fun current(): Mix {
@@ -86,14 +94,19 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         val index = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         // Boost only counts while the phone is at full volume (volume keys down = no boost shown).
         val volume = if (index >= max) 100 + boost else index * 100 / max
-        return Mix(volume, audio.isStreamMute(AudioManager.STREAM_MUSIC), bands)
+        return Mix(volume, audio.isStreamMute(AudioManager.STREAM_MUSIC), bands, boostUnlocked)
     }
 
     fun apply(mix: Mix) {
+        if (mix.boostUnlocked != boostUnlocked) {
+            boostUnlocked = mix.boostUnlocked
+            prefs.edit().putBoolean("boost_unlocked", boostUnlocked).apply()
+        }
+        val volume = if (boostUnlocked) mix.volume else mix.volume.coerceAtMost(100)
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val base = mix.volume.coerceAtMost(100)
+        val base = volume.coerceAtMost(100)
         runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, (base * max + 50) / 100, 0) }
-        val newBoost = (mix.volume - 100).coerceIn(0, 100)
+        val newBoost = (volume - 100).coerceIn(0, 100)
         if (newBoost != boost) applyBoost(newBoost)
         if (mix.muted != audio.isStreamMute(AudioManager.STREAM_MUSIC)) {
             runCatching {

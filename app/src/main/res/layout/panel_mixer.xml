@@ -92,6 +92,13 @@
                     android:text="🔇 Mute" />
             </LinearLayout>
 
+            <!-- Safety lock for 101-200%: protects the phone's speaker. -->
+            <Button
+                android:id="@+id/mixerBoostLock"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAllCaps="false" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
