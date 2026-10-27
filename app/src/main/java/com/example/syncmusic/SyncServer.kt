@@ -2,6 +2,7 @@ package com.example.syncmusic
 
 import java.io.File
 import java.io.PrintWriter
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
@@ -12,7 +13,8 @@ import kotlin.concurrent.thread
  * Host side. Line-based text protocol over TCP. Every playlist switch bumps `version`;
  * messages carry it so clients ignore anything about a previous item.
  *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent> | NEXTREADY <videoId>
- *   host -> client : PONG <t0> <hostNow>
+ *   host -> client : HELLO <hostId> <hostName>   (first line after connecting)
+ *                    PONG <t0> <hostNow>
  *                    ITEM <version> local <httpPort> <fileId> <audio|video> <title>
  *                    ITEM <version> yt <videoId> <title>
  *                    PLAY <version> <posMs> <hostStartTime> | PAUSE
@@ -20,8 +22,23 @@ import kotlin.concurrent.thread
  *                    SKIP <totalMs>   (only shows "⏩ +15s" on screen; the jump itself is a PLAY)
  *                    NEXT <videoId>   (preload 20% of the upcoming YouTube video in the background)
  */
-class SyncServer(private val onEvent: (String) -> Unit) {
-    private val serverSocket = ServerSocket(0)
+class SyncServer(
+    /** Permanent id of this host, so clients can recognize it next time. */
+    private val hostId: String,
+    private val hostName: String,
+    private val onEvent: (String) -> Unit,
+) {
+    companion object {
+        /** Same port every time when possible, so a remembered address keeps working. */
+        const val PREFERRED_PORT = 47800
+    }
+
+    private val serverSocket = runCatching {
+        ServerSocket().apply {
+            reuseAddress = true
+            bind(InetSocketAddress(PREFERRED_PORT))
+        }
+    }.getOrElse { ServerSocket(0) }
     private val http = FileHttpServer()
     /** Connected clients -> last item version they reported READY for. */
     private val clients = ConcurrentHashMap<PrintWriter, Int>()
@@ -96,6 +113,7 @@ class SyncServer(private val onEvent: (String) -> Unit) {
         val out = PrintWriter(socket.getOutputStream(), true)
         clients[out] = 0
         onEvent("ទូរស័ព្ទភ្ជាប់: ${socket.inetAddress.hostAddress}")
+        synchronized(out) { out.println("HELLO $hostId ${hostName.replace('\n', ' ')}") }
         itemMessage?.let { synchronized(out) { out.println(it) } }
         nextMessage?.let { synchronized(out) { out.println(it) } }
         try {

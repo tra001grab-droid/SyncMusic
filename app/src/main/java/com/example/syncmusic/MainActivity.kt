@@ -175,7 +175,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             }
         }
 
-        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         backgroundYouTube = prefs.getBoolean("yt_background", true)
         ytPlayer.view.enableBackgroundPlayback(backgroundYouTube)
         ytSpare.view.enableBackgroundPlayback(backgroundYouTube)
@@ -234,13 +233,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
         findViewById<Button>(R.id.btnBack5).setOnClickListener { queueSkip(-5000) }
         findViewById<Button>(R.id.btnForward5).setOnClickListener { queueSkip(5000) }
-        val settings = getSharedPreferences("settings", MODE_PRIVATE)
-        autoPlayEnabled = settings.getBoolean("autoplay", true)
+        autoPlayEnabled = prefs.getBoolean("autoplay", true)
         findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAutoplay).apply {
             isChecked = autoPlayEnabled
             setOnCheckedChangeListener { _, checked ->
                 autoPlayEnabled = checked
-                settings.edit().putBoolean("autoplay", checked).apply()
+                prefs.edit().putBoolean("autoplay", checked).apply()
             }
         }
         findViewById<Button>(R.id.btnNext).setOnClickListener {
@@ -264,7 +262,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             override fun onStopTrackingTouch(bar: SeekBar) {}
         })
 
-        handleShare(intent)
+        if (intent?.action == Intent.ACTION_SEND) handleShare(intent) else offerLastSession()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -414,6 +412,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun startHost() {
         if (hosting) return
         hosting = true
+        prefs.edit().putString("last_role", "host").apply()
         showPanel(host = true)
         if (playlist.isEmpty()) {
             playlist.addAll(PlaylistStore.load(File(filesDir, "playlist.json"), filesDir))
@@ -421,7 +420,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
         startBackgroundService()
         thread {
-            val s = SyncServer { event -> setStatus(hostStatus(event)) }
+            val s = SyncServer(hostId(), Build.MODEL) { event -> setStatus(hostStatus(event)) }
             s.start()
             server = s
             val info = NsdServiceInfo().apply {
@@ -430,6 +429,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 port = s.port
                 // The address NSD resolves can be the mobile-data one, so publish every LAN address.
                 setAttribute("ips", Network.lanAddresses().joinToString(","))
+                // Lets a client that connected before find this same phone again.
+                setAttribute("id", hostId())
             }
             val reg = object : NsdManager.RegistrationListener {
                 override fun onServiceRegistered(info: NsdServiceInfo) {}
@@ -719,8 +720,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     // -------------------------------------------------------------- Client
 
-    private fun startDiscovery() {
+    /** Finds a host on the Wi-Fi; with [onlyHostId], only that (remembered) host. */
+    private fun startDiscovery(onlyHostId: String? = null) {
         showPanel(host = false)
+        stopDiscovery()
         setStatus("កំពុងស្វែងរក Host នៅក្នុង Wi-Fi…")
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(type: String) {}
@@ -734,6 +737,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 nsd.resolveService(info, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(info: NsdServiceInfo, code: Int) {}
                     override fun onServiceResolved(info: NsdServiceInfo) {
+                        val id = info.attributes["id"]?.let { String(it) }
+                        if (onlyHostId != null && id != onlyHostId) return
                         val advertised = info.attributes["ips"]?.let { String(it).split(",") }.orEmpty()
                         val resolved = listOfNotNull(info.host?.hostAddress)
                         val candidates = Network.preferSameSubnet((advertised + resolved).filter { it.isNotBlank() })
@@ -761,6 +766,66 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     override fun onStatus(text: String) = setStatus(text)
 
+    override fun onHello(hostId: String, hostName: String, address: String, port: Int) {
+        main.post {
+            reconnectingHostId = null
+            // The address that worked first, then earlier ones (the host may switch networks).
+            val ips = (listOf(address) + prefs.getString("known_host_ips", "").orEmpty().split(","))
+                .filter { it.isNotBlank() }.distinct().take(4)
+            prefs.edit()
+                .putString("last_role", "client")
+                .putString("known_host_id", hostId)
+                .putString("known_host_name", hostName)
+                .putString("known_host_ips", ips.joinToString(","))
+                .putInt("known_host_port", port)
+                .apply()
+            setStatus("✔ បានភ្ជាប់ទៅ $hostName")
+        }
+    }
+
+    // ------------------------------------------------------- remembered devices
+
+    private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
+    /** Set while trying a remembered host's saved address; on failure we search for it instead. */
+    private var reconnectingHostId: String? = null
+
+    /** This phone's permanent id when it is the host. */
+    private fun hostId(): String = prefs.getString("host_id", null)
+        ?: UUID.randomUUID().toString().take(8).also { prefs.edit().putString("host_id", it).apply() }
+
+    /** At launch: offer to resume as host, or to reconnect to the host used last time, in one tap. */
+    private fun offerLastSession() {
+        when (prefs.getString("last_role", null)) {
+            "host" -> AlertDialog.Builder(this)
+                .setTitle("Sync Music")
+                .setMessage("ចាប់ផ្ដើមជា Host ដូចលើកមុន?")
+                .setPositiveButton("✔ អនុញ្ញាត") { _, _ -> startHost() }
+                .setNegativeButton("ទេ", null)
+                .show()
+            "client" -> {
+                val id = prefs.getString("known_host_id", null) ?: return
+                val name = prefs.getString("known_host_name", "Host")
+                AlertDialog.Builder(this)
+                    .setTitle("Sync Music")
+                    .setMessage("ភ្ជាប់ទៅ $name ដែលធ្លាប់ភ្ជាប់?")
+                    .setPositiveButton("✔ អនុញ្ញាត") { _, _ -> reconnectKnownHost(id) }
+                    .setNegativeButton("ទេ", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun reconnectKnownHost(id: String) {
+        val ips = prefs.getString("known_host_ips", "").orEmpty().split(",").filter { it.isNotBlank() }
+        val port = prefs.getInt("known_host_port", SyncServer.PREFERRED_PORT)
+        if (ips.isEmpty()) {
+            startDiscovery(onlyHostId = id)
+            return
+        }
+        reconnectingHostId = id
+        connect(Network.preferSameSubnet(ips), port)
+    }
+
     override fun onDownloading(version: Int) {
         main.post { if (version == clientVersion) setStatus("⏳ កំពុងទាញយកពី Host (លើកដំបូងតែប៉ុណ្ណោះ)…") }
     }
@@ -769,6 +834,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         main.post {
             client?.stop()
             client = null
+            // The remembered address didn't work (new IP?): look for that same host on the Wi-Fi.
+            val knownId = reconnectingHostId
+            if (knownId != null) {
+                reconnectingHostId = null
+                startDiscovery(onlyHostId = knownId)
+                setStatus("កំពុងស្វែងរក ${prefs.getString("known_host_name", "Host")}…")
+                return@post
+            }
             loaded = false
             hostPlaying = false
             cancelStart()

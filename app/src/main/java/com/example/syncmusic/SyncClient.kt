@@ -22,6 +22,8 @@ class SyncClient(
 ) {
     interface Listener {
         fun onStatus(text: String)
+        /** Connected to the host [hostId] at [address]:[port] (used to remember it). */
+        fun onHello(hostId: String, hostName: String, address: String, port: Int)
         /** A new item was announced; stop the current one. */
         fun onItemChanging(version: Int, title: String)
         fun onLocalItem(version: Int, file: File, isVideo: Boolean)
@@ -121,6 +123,10 @@ class SyncClient(
     private fun handle(line: String) {
         val p = line.split(" ", limit = 5)
         when (p[0]) {
+            "HELLO" -> {
+                val f = line.split(" ", limit = 3)
+                listener.onHello(f[1], f.getOrElse(2) { "Host" }, host, port)
+            }
             "PONG" -> {
                 val t0 = p[1].toLong()
                 val hostTime = p[2].toLong()
