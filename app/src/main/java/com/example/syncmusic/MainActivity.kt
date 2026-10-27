@@ -20,6 +20,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.provider.Settings
+import android.database.ContentObserver
 import android.speech.RecognizerIntent
 import android.view.View
 import android.view.ViewGroup
@@ -163,7 +165,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         // onStop (screen off). onStop() below decides instead, based on the user's setting.
 
         // Only the host advances the playlist; clients follow its ITEM messages.
-        localPlayer = LocalPlayer(this) { onItemEnded() }
+        mixer = Mixer(this, prefs)
+        localPlayer = LocalPlayer(this, mixer.sessionId) { onItemEnded() }
         videoView = findViewById(R.id.videoView)
         localPlayer.attach(videoView)
         ytPlayer = makeYouTubePlayer(findViewById(R.id.youtubeView))
@@ -201,6 +204,24 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (host.isEmpty() || port == null) setStatus("សូមវាយជាទម្រង់ IP:port") else connect(listOf(host), port)
         }
 
+        mixerPanel = MixerPanel(
+            this,
+            findViewById(R.id.mixerPanel),
+            devices = ::mixerDevices,
+            getMix = ::mixerGet,
+            setMix = ::mixerSet,
+            note = {
+                when {
+                    !mixer.eqAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត EQ ទេ — Volume នៅតែដំណើរការ"
+                    !mixer.eqWorksForYouTube -> "ℹ EQ ដំណើរការជាមួយបទ/វីដេអូក្នុងទូរស័ព្ទ។ ទូរស័ព្ទនេះមិនអនុញ្ញាតឲ្យ EQ ប្ដូរសំឡេង YouTube ទេ។"
+                    else -> "EQ ដំណើរការជាមួយបទក្នុងទូរស័ព្ទ និង YouTube។"
+                }
+            },
+        )
+        findViewById<Button>(R.id.btnMixer).setOnClickListener { mixerPanel.show() }
+        findViewById<Button>(R.id.btnMixerClient).setOnClickListener { mixerPanel.show() }
+        // Volume keys change the media volume: keep the mixer (and the host's view of us) current.
+        contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volumeObserver)
         findViewById<Button>(R.id.btnAddSongs).setOnClickListener { pickAudio.launch(arrayOf("audio/*", "video/*")) }
         findViewById<Button>(R.id.btnAddYoutube).setOnClickListener { addYouTube() }
         searchPanel = SearchPanel(
@@ -223,6 +244,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    mixerPanel.isOpen -> mixerPanel.hide()
                     searchPanel.closeSuggestions() -> {}
                     fullscreen -> setFullscreen(false)
                     // Like music apps: Back on the main screen keeps the session running in the background.
@@ -448,6 +470,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         startBackgroundService()
         thread {
             val s = SyncServer(hostId(), Build.MODEL) { event -> setStatus(hostStatus(event)) }
+            s.onClientsChanged = { main.post { mixerPanel.refresh() } }
             s.start()
             server = s
             val info = NsdServiceInfo().apply {
@@ -807,6 +830,72 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 .putInt("known_host_port", port)
                 .apply()
             setStatus("✔ បានភ្ជាប់ទៅ $hostName")
+            client?.sendIam(Build.MODEL)
+            reportMix()
+        }
+    }
+
+    // ------------------------------------------------------------------ mixer
+
+    private lateinit var mixer: Mixer
+    private lateinit var mixerPanel: MixerPanel
+    private var lastReportedMix: String? = null
+
+    private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            reportMix()
+            mixerPanel.refresh()
+        }
+    }
+
+    /** Client: tell the host our current volume/EQ (only when it changed). */
+    private fun reportMix() {
+        val c = client ?: return
+        val mix = mixer.current()
+        if (mix.encode() == lastReportedMix) return
+        lastReportedMix = mix.encode()
+        c.sendMix(mix)
+    }
+
+    private fun mixerDevices(): List<Pair<String, String>> {
+        val s = server ?: return listOf(MixerPanel.SELF to "📱 ទូរស័ព្ទនេះ")
+        return listOf(MixerPanel.SELF to "📱 ទូរស័ព្ទនេះ (Host)", MixerPanel.ALL to "🔊 ទាំងអស់") +
+            s.clientList().map { "c${it.key}" to "📱 ${it.name}" }
+    }
+
+    private fun clientOf(deviceId: String) =
+        server?.clientList()?.firstOrNull { "c${it.key}" == deviceId }
+
+    private fun mixerGet(deviceId: String): Mix? = when (deviceId) {
+        MixerPanel.SELF, MixerPanel.ALL -> mixer.current()
+        else -> Mix.decode(clientOf(deviceId)?.mix)
+    }
+
+    private fun mixerSet(deviceId: String, mix: Mix) {
+        val s = server
+        when (deviceId) {
+            MixerPanel.SELF -> {
+                mixer.apply(mix)
+                reportMix()
+            }
+            MixerPanel.ALL -> {
+                mixer.apply(mix)
+                s?.clientList()?.forEach { setClientMix(it, mix) }
+            }
+            else -> clientOf(deviceId)?.let { setClientMix(it, mix) }
+        }
+    }
+
+    private fun setClientMix(target: SyncServer.ClientInfo, mix: Mix) {
+        target.mix = mix.encode()  // shown right away; the phone confirms with its own MIX
+        server?.sendTo(target.key, "SETMIX ${mix.encode()}")
+    }
+
+    override fun onSetMix(mix: String) {
+        main.post {
+            Mix.decode(mix)?.let { mixer.apply(it) }
+            reportMix()
+            mixerPanel.refresh()
         }
     }
 
@@ -1294,6 +1383,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     override fun onDestroy() {
         super.onDestroy()
         PlaybackService.stop(this)
+        contentResolver.unregisterContentObserver(volumeObserver)
+        mixer.release()
         searchPanel.destroy()
         main.removeCallbacksAndMessages(null)
         stopDiscovery()

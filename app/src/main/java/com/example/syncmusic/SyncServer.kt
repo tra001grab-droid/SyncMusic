@@ -13,6 +13,7 @@ import kotlin.concurrent.thread
  * Host side. Line-based text protocol over TCP. Every playlist switch bumps `version`;
  * messages carry it so clients ignore anything about a previous item.
  *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent> | NEXTREADY <videoId>
+ *                    IAM <name> | MIX <mix>   (mixer: who the phone is, its volume/EQ)
  *   host -> client : HELLO <hostId> <hostName>   (first line after connecting)
  *                    PONG <t0> <hostNow>
  *                    ITEM <version> local <httpPort> <fileId> <audio|video> <title>
@@ -21,6 +22,7 @@ import kotlin.concurrent.thread
  *                    POS <version> <posMs> <hostTime>
  *                    SKIP <totalMs>   (only shows "⏩ +15s" on screen; the jump itself is a PLAY)
  *                    NEXT <videoId>   (preload 20% of the upcoming YouTube video in the background)
+ *                    SETMIX <mix>     (host's mixer changed this phone's volume/EQ; see Mix.encode)
  */
 class SyncServer(
     /** Permanent id of this host, so clients can recognize it next time. */
@@ -47,6 +49,27 @@ class SyncServer(
     /** Connected clients -> the upcoming video they have preloaded. */
     private val nextReady = ConcurrentHashMap<PrintWriter, String>()
     @Volatile private var nextMessage: String? = null
+
+    /** A connected phone as the mixer shows it. */
+    class ClientInfo(val key: Int, address: String) {
+        @Volatile var name: String = address
+        /** Its latest Mix.encode(), as reported by it (or as last set by the host). */
+        @Volatile var mix: String? = null
+    }
+
+    private val info = ConcurrentHashMap<PrintWriter, ClientInfo>()
+    private val nextKey = java.util.concurrent.atomic.AtomicInteger(1)
+    /** Called (on a network thread) when a phone connects, disconnects or reports its mix. */
+    @Volatile var onClientsChanged: (() -> Unit)? = null
+
+    fun clientList(): List<ClientInfo> = info.values.sortedBy { it.key }
+
+    /** Send [message] to one phone only. */
+    fun sendTo(key: Int, message: String) {
+        val out = info.entries.firstOrNull { it.value.key == key }?.key ?: return
+        if (sender.isShutdown) return
+        runCatching { sender.execute { synchronized(out) { out.println(message) } } }
+    }
     private val sender = Executors.newSingleThreadExecutor()
     @Volatile private var itemMessage: String? = null
 
@@ -117,6 +140,8 @@ class SyncServer(
         socket.tcpNoDelay = true
         val out = PrintWriter(socket.getOutputStream(), true)
         clients[out] = 0
+        info[out] = ClientInfo(nextKey.getAndIncrement(), socket.inetAddress.hostAddress ?: "?")
+        onClientsChanged?.invoke()
         onEvent("ទូរស័ព្ទភ្ជាប់: ${socket.inetAddress.hostAddress}")
         synchronized(out) { out.println("HELLO $hostId ${hostName.replace('\n', ' ')}") }
         itemMessage?.let { synchronized(out) { out.println(it) } }
@@ -129,6 +154,14 @@ class SyncServer(
                     "PING" -> synchronized(out) { out.println("PONG ${parts[1]} ${now()}") }
                     "READY" -> parts.getOrNull(1)?.toIntOrNull()?.let { clients[out] = it }
                     "NEXTREADY" -> parts.getOrNull(1)?.let { nextReady[out] = it }
+                    "IAM" -> {
+                        info[out]?.name = line.split(" ", limit = 2).getOrElse(1) { "?" }
+                        onClientsChanged?.invoke()
+                    }
+                    "MIX" -> {
+                        info[out]?.mix = parts.getOrNull(1)
+                        onClientsChanged?.invoke()
+                    }
                     "PROGRESS" -> if (parts.getOrNull(1)?.toIntOrNull() == version) {
                         parts.getOrNull(2)?.toIntOrNull()?.let { progress[out] = it }
                     }
@@ -139,6 +172,8 @@ class SyncServer(
             clients.remove(out)
             progress.remove(out)
             nextReady.remove(out)
+            info.remove(out)
+            onClientsChanged?.invoke()
             socket.close()
             onEvent("ទូរស័ព្ទផ្ដាច់")
         }

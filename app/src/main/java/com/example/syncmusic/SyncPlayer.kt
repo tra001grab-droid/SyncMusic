@@ -37,9 +37,11 @@ interface SyncPlayer {
     fun setSpeed(speed: Float)
 }
 
-class LocalPlayer(context: Context, onEnded: () -> Unit) : SyncPlayer {
+/** [audioSessionId]: the mixer's session, so its EQ applies to this player. */
+class LocalPlayer(context: Context, audioSessionId: Int, onEnded: () -> Unit) : SyncPlayer {
     private var playingSince = 0L
     private val exo = ExoPlayer.Builder(context).build().apply {
+        setAudioSessionId(audioSessionId)
         addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) onEnded()

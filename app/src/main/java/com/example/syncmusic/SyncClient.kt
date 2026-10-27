@@ -37,6 +37,8 @@ class SyncClient(
         fun onSkip(totalMs: Long)
         /** Preload [videoId] in the background; it's the next song. */
         fun onNext(videoId: String)
+        /** The host's mixer set this phone's volume/EQ (see Mix.decode). */
+        fun onSetMix(mix: String)
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -111,6 +113,11 @@ class SyncClient(
 
     fun sendNextReady(videoId: String) = send("NEXTREADY $videoId")
 
+    /** Tell the host who we are (shown in its mixer). */
+    fun sendIam(name: String) = send("IAM ${name.replace('\n', ' ')}")
+
+    fun sendMix(mix: Mix) = send("MIX ${mix.encode()}")
+
     private fun startPinging() = thread(name = "sync-ping", isDaemon = true) {
         var count = 0
         while (running) {
@@ -155,6 +162,7 @@ class SyncClient(
             "POS" -> listener.onPosition(p[1].toInt(), p[2].toLong(), p[3].toLong() - offset)
             "SKIP" -> listener.onSkip(p[1].toLong())
             "NEXT" -> listener.onNext(p[1])
+            "SETMIX" -> listener.onSetMix(p[1])
         }
     }
 

@@ -348,6 +348,12 @@
             android:text="🔁 Auto play (ចាក់បទបន្ទាប់ដោយស្វ័យប្រវត្តិ)" />
 
         <Button
+            android:id="@+id/btnMixer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎚 Mixer — សំឡេង &amp; EQ (គ្រប់ទូរស័ព្ទ)" />
+
+        <Button
             android:id="@+id/btnAddSongs"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -410,6 +416,12 @@
         android:orientation="vertical"
         android:visibility="gone">
 
+        <Button
+            android:id="@+id/btnMixerClient"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎚 Mixer — សំឡេង &amp; EQ" />
+
         <TextView
             android:id="@+id/calibrationLabel"
             android:layout_width="match_parent"
@@ -433,5 +445,13 @@
     android:layout_height="match_parent"
     android:background="#0F0F0F"
     android:divider="@null"
+    android:visibility="gone" />
+
+<!-- 🎚 Mixer screen, over everything. -->
+<include
+    android:id="@+id/mixerPanel"
+    layout="@layout/panel_mixer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
     android:visibility="gone" />
 </FrameLayout>
