@@ -63,10 +63,14 @@ class SearchHistory(private val prefs: SharedPreferences) {
 
 /** Search suggestions from YouTube, like the YouTube app's search box. */
 object YouTubeSuggest {
-    /** Blocking; call off the main thread. Empty list on any error. */
-    fun fetch(query: String): List<String> = runCatching {
-        val url = "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=km" +
-            "&ie=utf-8&oe=utf-8&q=" + URLEncoder.encode(query, "UTF-8")
+    /** Blocking; call off the main thread. Tries two endpoints; empty list if both fail. */
+    fun fetch(query: String): List<String> {
+        val q = URLEncoder.encode(query, "UTF-8")
+        return fetchFrom("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=km&ie=utf-8&oe=utf-8&q=$q")
+            .ifEmpty { fetchFrom("https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&ds=yt&hl=km&q=$q") }
+    }
+
+    private fun fetchFrom(url: String): List<String> = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 4000
         conn.readTimeout = 4000
@@ -141,10 +145,13 @@ class SuggestionList(
         data class Library(val item: PlaylistItem.Local) : Row()
         data class History(val entry: SearchHistory.Entry) : Row()
         data class Suggestion(val text: String) : Row()
+        data class Hint(val text: String) : Row()
     }
 
     private var rows = emptyList<Row>()
     private var token = 0
+    /** True between update() and hide(), even while the list has no rows yet. */
+    private var open = false
     private val adapter = object : BaseAdapter() {
         override fun getCount() = rows.size
         override fun getItem(position: Int) = rows[position]
@@ -162,6 +169,7 @@ class SuggestionList(
                 is Row.Library -> onPickLocal(row.item)
                 is Row.History -> onSearch(row.entry.query)
                 is Row.Suggestion -> onSearch(row.text)
+                is Row.Hint -> if (lastText.isNotBlank()) onSearch(lastText.trim())
             }
         }
         list.setOnItemLongClickListener { _, _, position, _ ->
@@ -176,6 +184,7 @@ class SuggestionList(
 
     /** Rebuild for [text]: local rows right away, YouTube suggestions shortly after (debounced). */
     fun update(text: String) {
+        open = true
         lastText = text
         val q = text.trim()
         val local = if (q.isEmpty()) emptyList() else findInLibrary(q).map { Row.Library(it) }
@@ -191,21 +200,29 @@ class SuggestionList(
             thread(isDaemon = true) {
                 val remote = YouTubeSuggest.fetch(q)
                 activity.runOnUiThread {
-                    if (myToken != token || !isShowing) return@runOnUiThread
+                    // Check "open", not visibility: with no history/library rows yet the list is hidden.
+                    if (myToken != token || !open) return@runOnUiThread
                     val known = past.map { it.entry.query.lowercase() }.toSet()
-                    show(local + past + remote.filter { it.lowercase() !in known }.take(10).map { Row.Suggestion(it) })
+                    show(local + past + remote.filter { it.lowercase() !in known }.take(10).map { Row.Suggestion(it) }, loading = false)
                 }
             }
         }, 250)
     }
 
-    private fun show(newRows: List<Row>) {
-        rows = newRows
+    private fun show(newRows: List<Row>, loading: Boolean = true) {
+        // Nothing to list: a hint instead of an empty screen.
+        val hint = when {
+            lastText.isBlank() -> "វាយឈ្មោះបទចម្រៀង ឬចុច 🎤"
+            loading -> "កំពុងស្វែងរក…"
+            else -> "🔍 ស្វែងរក \"${lastText.trim()}\""
+        }
+        rows = newRows.ifEmpty { listOf(Row.Hint(hint)) }
         adapter.notifyDataSetChanged()
-        list.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
+        list.visibility = View.VISIBLE
     }
 
     fun hide() {
+        open = false
         token++
         list.visibility = View.GONE
     }
@@ -237,6 +254,7 @@ class SuggestionList(
             is Row.Library -> Triple(if (row.item.isVideo) "🎬" else "📁", row.item.title, null)
             is Row.History -> Triple("🕘", row.entry.query, row.entry.videoId)
             is Row.Suggestion -> Triple("🔍", row.text, null)
+            is Row.Hint -> Triple("", row.text, null)
         }
         icon.text = iconText
         label.text = text
@@ -249,7 +267,7 @@ class SuggestionList(
             thumb.visibility = View.GONE
         }
         // Library rows play directly; the others can be copied into the box to keep typing.
-        fill.visibility = if (row is Row.Library) View.INVISIBLE else View.VISIBLE
+        fill.visibility = if (row is Row.Library || row is Row.Hint) View.INVISIBLE else View.VISIBLE
         fill.setOnClickListener { onFill(text) }
         return view
     }

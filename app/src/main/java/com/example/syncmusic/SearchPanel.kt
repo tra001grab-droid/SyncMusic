@@ -120,6 +120,8 @@ class SearchPanel(
         }
         // Like the YouTube app: suggestions while the search box is focused, updated as you type.
         query.setOnFocusChangeListener { _, focused -> if (focused && isOpen) showSuggestions() else suggestions.hide() }
+        // A tap on a box that already has focus doesn't change focus, so open the list here too.
+        query.setOnClickListener { if (isOpen) showSuggestions() }
         query.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
