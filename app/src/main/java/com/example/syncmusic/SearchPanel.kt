@@ -66,6 +66,8 @@ class SearchPanel(
     private val onPickLocal: (PlaylistItem.Local) -> Unit,
     /** Suggestions list laid over the player and results while typing. */
     private val suggestionsView: ListView,
+    /** The results were scrolled: true = up (towards more results), false = down / back at the top. */
+    private val onResultsScroll: (up: Boolean) -> Unit,
 ) {
     private val history = SearchHistory(activity.getSharedPreferences("settings", Context.MODE_PRIVATE))
     private val localResults: LinearLayout = root.findViewById(R.id.localResults)
@@ -138,6 +140,13 @@ class SearchPanel(
         web.settings.mediaPlaybackRequiresUserGesture = true
         // The search page never plays anything itself (the synced player above does), but YouTube's
         // mobile site auto-plays previews in the results. Block video data and stop any preview.
+        web.setOnScrollChangeListener { _, _, y, _, oldY ->
+            when {
+                y <= 0 -> onResultsScroll(false)
+                y - oldY > 8 -> onResultsScroll(true)
+                y - oldY < -8 -> onResultsScroll(false)
+            }
+        }
         web.webViewClient = object : WebViewClient() {
             // Without this, a crashed/killed WebView renderer makes Android kill the whole app.
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

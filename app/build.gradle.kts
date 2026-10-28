@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.syncmusic"
         minSdk = 24
         targetSdk = 35
-        versionCode = 30
-        versionName = "3.4"
+        versionCode = 31
+        versionName = "3.4.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

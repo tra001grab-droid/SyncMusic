@@ -5,6 +5,7 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.animation.ValueAnimator
 import android.content.res.ColorStateList
 import android.app.AlertDialog
 import android.webkit.RenderProcessGoneDetail
@@ -58,7 +59,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val POS_INTERVAL_MS = 1000L
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
         private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
-        private const val SKIP_SETTLE_MS = 700L        // wait this long after the last skip tap
+        private const val SKIP_SETTLE_MS = 1000L       // wait this long after the last skip tap
+        private const val MAX_SKIP_MS = 200_000L       // one skip goes at most 200 s
+        private const val CONTROLS_TIMEOUT_MS = 5000L  // control bar hides after this without a touch
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
 
@@ -176,7 +179,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         // Taps on the video would pause YouTube behind the app's back; route them through the app instead.
         findViewById<View>(R.id.playerTouchGuard).setOnClickListener {
             when {
-                server != null -> if (active?.isActive == true) hostPause() else hostPlay()
+                server != null -> if (controlsShown) hideControlsNow() else showControls()
                 else -> Toast.makeText(this, "Host ជាអ្នកបញ្ជាការចាក់", Toast.LENGTH_SHORT).show()
             }
         }
@@ -245,6 +248,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 if (index >= 0) hostSelect(index, autoPlay = true)
             },
             suggestionsView = findViewById(R.id.suggestionsList),
+            onResultsScroll = { up -> setPlayerCollapsed(up) },
         )
         searchPanel.hide()
         sizePlayer()
@@ -266,8 +270,15 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<Button>(R.id.btnPrev).setOnClickListener {
             if (currentIndex > 0) hostSelect(currentIndex - 1, autoPlay = true)
         }
-        findViewById<Button>(R.id.btnBack5).setOnClickListener { queueSkip(-5000) }
-        findViewById<Button>(R.id.btnForward5).setOnClickListener { queueSkip(5000) }
+        findViewById<Button>(R.id.btnBack5).setOnClickListener { queueSkip(-1) }
+        findViewById<Button>(R.id.btnForward5).setOnClickListener { queueSkip(+1) }
+        // Using the bar keeps it on screen for another 5 s.
+        for (id in listOf(R.id.btnPrev, R.id.btnBack5, R.id.btnPlay, R.id.btnPause, R.id.btnForward5, R.id.btnNext)) {
+            findViewById<View>(id).setOnTouchListener { _, _ ->
+                if (controlsShown) showControls()
+                false
+            }
+        }
         autoPlayEnabled = prefs.getBoolean("autoplay", true)
         findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAutoplay).apply {
             isChecked = autoPlayEnabled
@@ -318,7 +329,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun showPanel(host: Boolean) {
         findViewById<View>(R.id.modePanel).visibility = View.GONE
         findViewById<View>(R.id.hostPanel).visibility = if (host) View.VISIBLE else View.GONE
-        findViewById<View>(R.id.hostControls).visibility = if (host) View.VISIBLE else View.GONE
+        refreshControls()
         findViewById<View>(R.id.clientPanel).visibility = if (host) View.GONE else View.VISIBLE
     }
 
@@ -354,6 +365,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             supportActionBar?.show()
             searchPanel.hide()
         }
+        if (!open) {
+            collapseAnimator?.cancel()
+            playerCollapsed = false
+            refreshControls()
+        }
         applyRootPadding()
         sizePlayer()
     }
@@ -378,7 +394,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         // stretch it to all free space and push the controls off screen.
         playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
             this.width = width
-            height = width * 9 / 16
+            height = if (playerCollapsed) 0 else width * 9 / 16
             weight = 0f
         }
         for (v in listOf(ytPlayer.view, ytSpare.view)) {
@@ -387,6 +403,62 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 height = width * 9 / 16
             }
         }
+    }
+
+    // ------------------------------------------------- control bar & collapsing player
+
+    /** Host control bar: while a video is shown it stays hidden until the video is tapped. */
+    private var controlsShown = false
+    private val hideControlsRunnable = Runnable { hideControlsNow() }
+    /** Search screen: the player slides away while the results are scrolled up. */
+    private var playerCollapsed = false
+    private var collapseAnimator: ValueAnimator? = null
+    private var lastCollapseChangeAt = 0L
+
+    private fun refreshControls() {
+        val videoShown = playerContainer.visibility == View.VISIBLE
+        findViewById<View>(R.id.hostControls).visibility = when {
+            !hosting -> View.GONE
+            !videoShown -> View.VISIBLE  // nothing to tap (song without video): always available
+            playerCollapsed -> View.GONE
+            controlsShown -> View.VISIBLE
+            else -> View.GONE
+        }
+    }
+
+    private fun showControls() {
+        controlsShown = true
+        refreshControls()
+        main.removeCallbacks(hideControlsRunnable)
+        main.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS)
+    }
+
+    private fun hideControlsNow() {
+        main.removeCallbacks(hideControlsRunnable)
+        controlsShown = false
+        refreshControls()
+    }
+
+    /** Results scrolled up → slide the player away; scrolled down → bring it back. */
+    private fun setPlayerCollapsed(collapsed: Boolean) {
+        if (collapsed == playerCollapsed || fullscreen) return
+        if (collapsed && (!searchPanel.isOpen || playerContainer.visibility != View.VISIBLE)) return
+        // Resizing moves the page a little; don't take that for the user's scroll.
+        if (now() - lastCollapseChangeAt < 400) return
+        lastCollapseChangeAt = now()
+        playerCollapsed = collapsed
+        val width = playerContainer.layoutParams.width.takeIf { it > 0 } ?: playerContainer.width
+        val target = if (collapsed) 0 else width * 9 / 16
+        collapseAnimator?.cancel()
+        // Only the box shrinks; the video inside keeps its size (and keeps playing).
+        collapseAnimator = ValueAnimator.ofInt(playerContainer.layoutParams.height, target).apply {
+            duration = 200
+            addUpdateListener { anim ->
+                playerContainer.layoutParams = playerContainer.layoutParams.apply { height = anim.animatedValue as Int }
+            }
+            start()
+        }
+        refreshControls()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -449,6 +521,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val showPlayer = title != null && kind != ItemKind.AUDIO
         if (!showPlayer) setFullscreen(false)
         playerContainer.visibility = if (showPlayer) View.VISIBLE else View.GONE
+        refreshControls()
         videoView.visibility = if (kind == ItemKind.VIDEO) View.VISIBLE else View.GONE
     }
 
@@ -669,9 +742,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         setStatus(hostStatus("✅ កំពុង sync"))
     }
 
-    private fun queueSkip(deltaMs: Long) {
+    /**
+     * [direction] +1 = ⏩, -1 = ⏪. Taps add up: 5 s steps up to 20 s, then 10 s steps
+     * (30, 40, 50, 60 …) up to 200 s; one jump is made once the taps stop.
+     */
+    private fun queueSkip(direction: Int) {
         if (currentIndex < 0) return
-        pendingSkipMs += deltaMs
+        val step = if (abs(pendingSkipMs) < 20_000) 5_000L else 10_000L
+        pendingSkipMs = (pendingSkipMs + direction * step).coerceIn(-MAX_SKIP_MS, MAX_SKIP_MS)
         showSkip(pendingSkipMs)
         server?.broadcast("SKIP $pendingSkipMs")
         main.removeCallbacks(applySkip)
