@@ -111,17 +111,31 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:paddingTop="4dp"
-                    android:text="◀ យឺតជាង Host · | Host · លឿនជាង Host ▶   (±300 ms)\n🟢 ≤60 ms  🟡 ≤150 ms  🔴 លើសនេះ — កែតាម ⏱ Delay ខាងក្រោម"
-                    android:textColor="#AAAAAA"
-                    android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Host only: which phone the controls below apply to. Filled in code. -->
+            <!--
+                The controls for one phone. On the host they stay hidden until a track is tapped,
+                and then open right under that track (moved there in code).
+            -->
+            <LinearLayout
+                android:id="@+id/mixerControls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="#1A1F26"
+                android:padding="8dp"
+                android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/mixerLegend"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:text="◀ យឺតជាង Host · | Host · លឿនជាង Host ▶   (±300 ms)\n🟢 ≤60 ms  🟡 ≤150 ms  🔴 លើសនេះ — កែតាម ⏱ Delay ខាងក្រោម"
+                android:textColor="#AAAAAA"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <!-- Client with nothing else: which phone the controls below apply to. Filled in code. -->
             <HorizontalScrollView
                 android:id="@+id/mixerDevicesScroll"
                 android:layout_width="match_parent"
@@ -261,6 +275,7 @@
                 android:paddingTop="16dp"
                 android:textColor="#AAAAAA"
                 android:textSize="13sp" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

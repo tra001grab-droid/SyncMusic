@@ -34,6 +34,8 @@ class MixerPanel(
 ) {
     /** One phone in the track view. [gapMs]: + = ahead of the host, null = no reading yet. */
     data class Track(
+        /** Same id as in [devices] (SELF or a client's id); tapping the track opens its controls. */
+        val id: String,
         val name: String,
         val isHost: Boolean,
         val gapMs: Long?,
@@ -64,6 +66,14 @@ class MixerPanel(
     private val autoSwitch: androidx.appcompat.widget.SwitchCompat = root.findViewById(R.id.mixerAutoDelay)
     private val autoStatus: TextView = root.findViewById(R.id.mixerAutoStatus)
     private val bandSliders = mutableListOf<SeekBar>()
+    /** Volume/Delay/EQ. Host: hidden until a track is tapped, then shown right under it. */
+    private val controls: LinearLayout = root.findViewById(R.id.mixerControls)
+    private val controlsHome = controls.parent as ViewGroup
+    private val controlsHomeIndex = controlsHome.indexOfChild(controls)
+    /** Host: the track whose controls are open (ALL = the "every phone" row), null = all closed. */
+    private var expanded: String? = null
+    /** Which rows the track list was last built with; rebuilt only when this changes. */
+    private var trackLayout = ""
     private val bandValues = mutableListOf<TextView>()
 
     private var selected = SELF
@@ -148,7 +158,10 @@ class MixerPanel(
     }
 
     fun show() {
+        expanded = null
+        trackLayout = ""
         root.visibility = View.VISIBLE
+        renderTracks()
         refresh(force = true)
         root.removeCallbacks(trackTicker)
         root.post(trackTicker)
@@ -158,25 +171,74 @@ class MixerPanel(
         val list = tracks()
         val section = root.findViewById<View>(R.id.mixerTracksSection)
         section.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
-        val box: LinearLayout = root.findViewById(R.id.mixerTracks)
-        // Rebuild rows only when the phones change; otherwise just update them.
-        if (box.childCount != list.size) {
-            box.removeAllViews()
-            repeat(list.size) { box.addView(makeTrackRow()) }
+        root.findViewById<View>(R.id.mixerLegend).visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+        if (list.isEmpty()) {
+            // Client: just its own controls, always open, in their usual place.
+            if (controls.parent !== controlsHome) {
+                (controls.parent as? ViewGroup)?.removeView(controls)
+                controlsHome.addView(controls, controlsHomeIndex)
+            }
+            controls.visibility = View.VISIBLE
+            return
         }
-        list.forEachIndexed { i, track -> bindTrackRow(box.getChildAt(i) as LinearLayout, track) }
+        if (expanded != null && expanded != ALL && list.none { it.id == expanded }) expanded = null
+        val box: LinearLayout = root.findViewById(R.id.mixerTracks)
+        // Rebuild only when phones join/leave or another track opens: rebuilding under a finger
+        // on a slider would break the drag.
+        val layout = list.joinToString(",") { it.id } + "|" + expanded
+        if (layout != trackLayout) {
+            trackLayout = layout
+            (controls.parent as? ViewGroup)?.removeView(controls)
+            box.removeAllViews()
+            for (track in list) {
+                box.addView(makeTrackRow().apply { tag = track.id; setOnClickListener { toggle(track.id) } })
+                if (track.id == expanded) box.addView(controls)
+            }
+            box.addView(makeTrackRow().apply {
+                tag = ALL
+                getChildAt(1).visibility = View.GONE
+                getChildAt(2).visibility = View.GONE
+                setOnClickListener { toggle(ALL) }
+            })
+            if (expanded == null || expanded == ALL) box.addView(controls)
+        }
+        controls.visibility = if (expanded != null) View.VISIBLE else View.GONE
+        val byId = list.associateBy { it.id }
+        for (i in 0 until box.childCount) {
+            val row = box.getChildAt(i) as? LinearLayout ?: continue
+            if (row === controls) continue
+            val id = row.tag as? String ?: continue
+            val open = id == expanded
+            row.setBackgroundColor(if (open) 0xFF1A1F26.toInt() else Color.TRANSPARENT)
+            val track = byId[id]
+            if (track != null) {
+                bindTrackRow(row, track, open)
+            } else if (id == ALL) {
+                (row.getChildAt(0) as TextView).text = (if (open) "▾ " else "▸ ") + "🔊 ទាំងអស់ — Volume/EQ គ្រប់ទូរស័ព្ទ"
+            }
+        }
+    }
+
+    /** Tap a track: open its controls (closing any other), tap again to close. */
+    private fun toggle(id: String) {
+        expanded = if (expanded == id) null else id
+        expanded?.let { selected = it }
+        renderTracks()
+        refresh(force = true)
     }
 
     private fun makeTrackRow() = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, dp(8), 0, 0)
+        setPadding(dp(4), dp(8), dp(4), dp(4))
+        isClickable = true
         addView(TextView(activity).apply { setTextColor(Color.WHITE); textSize = 14f })
         addView(TrackBarView(activity), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)))
         addView(TextView(activity).apply { setTextColor(Color.LTGRAY); textSize = 12f })
     }
 
-    private fun bindTrackRow(row: LinearLayout, track: Track) {
-        (row.getChildAt(0) as TextView).text = (if (track.isHost) "👑 " else "📱 ") + track.name +
+    private fun bindTrackRow(row: LinearLayout, track: Track, open: Boolean) {
+        (row.getChildAt(0) as TextView).text = (if (open) "▾ " else "▸ ") +
+            (if (track.isHost) "👑 " else "📱 ") + track.name +
             if (track.bluetooth) "  🎧" else ""
         (row.getChildAt(1) as TrackBarView).errorMs = if (track.isHost) 0 else track.gapMs
         val gap = track.gapMs
@@ -210,7 +272,9 @@ class MixerPanel(
         if (!isOpen || (touching && !force)) return
         val list = devices()
         if (list.none { it.first == selected }) selected = SELF
-        root.findViewById<View>(R.id.mixerDevicesScroll).visibility = if (list.size > 1) View.VISIBLE else View.GONE
+        // On the host the tracks above pick the phone, so no extra row of buttons.
+        root.findViewById<View>(R.id.mixerDevicesScroll).visibility =
+            if (list.size > 1 && tracks().isEmpty()) View.VISIBLE else View.GONE
         deviceRow.removeAllViews()
         for ((id, label) in list) {
             deviceRow.addView(Button(activity).apply {

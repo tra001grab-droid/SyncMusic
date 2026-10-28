@@ -1170,12 +1170,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun mixerTracks(): List<MixerPanel.Track> {
         val s = server ?: return emptyList()
         val self = mixer.current()
-        val host = MixerPanel.Track("${Build.MODEL} (Host)", true, 0, null, self.delayMs, self.bluetooth)
+        val host = MixerPanel.Track(MixerPanel.SELF, "${Build.MODEL} (Host)", true, 0, null, self.delayMs, self.bluetooth)
         return listOf(host) + s.clientList().map { c ->
             val mix = Mix.decode(c.mix)
             val fresh = now() - c.statAt < 5000
             MixerPanel.Track(
-                c.name, false,
+                "c${c.key}", c.name, false,
                 gapMs = if (fresh) c.gapMs else null,
                 rttMs = c.rttMs,
                 delayMs = mix?.delayMs ?: 0,
