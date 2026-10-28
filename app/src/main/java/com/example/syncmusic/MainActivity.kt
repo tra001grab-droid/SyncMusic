@@ -494,35 +494,25 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
     }
 
-    /** Results scrolled: up → header slides away and the player shrinks to the mini player; down → header comes back over the results. */
+    /** Results scrolled: up → the search bar slides away (the video moves up); down → it comes back (the video moves down). */
     private fun onResultsScroll(y: Int, dy: Int) {
         if (!searchPanel.isOpen || fullscreen) return
         if (y <= 0) {
-            // Back at the top: everything in its normal place.
             dockHeader()
-            setPlayerCollapsed(false)
             return
         }
         // Resizing moves the page a little; don't take that for the user's scroll.
         if (now() - lastScrollChangeAt < 300) return
         if (dy > 8 && !headerHidden) {
+            // Up: only the search bar slides away; the full-size video moves up to the top.
             lastScrollChangeAt = now()
             headerHidden = true
             searchHeader.animate().translationY(-searchHeader.height.toFloat()).setDuration(200).start()
             animateHeaderSpace(0)
-            // Like the YouTube app: keep watching in the corner while browsing (tap it to bring it back).
-            if (playerContainer.visibility == View.VISIBLE) setMini(true)
         } else if (dy < -8 && headerHidden) {
+            // Down: the search bar comes back and the video moves down with it.
             lastScrollChangeAt = now()
-            val fullVideo = playerContainer.visibility == View.VISIBLE && !mini
-            if (fullVideo) {
-                // A full-size video is right below: take room above it rather than covering it.
-                dockHeader()
-            } else {
-                headerHidden = false
-                // Over the results, without pushing them down.
-                searchHeader.animate().translationY(0f).setDuration(200).start()
-            }
+            dockHeader()
         }
     }
 
@@ -531,12 +521,20 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var overlayShown = false
     private var seeking = false
     private val hideOverlayRunnable = Runnable { hideOverlay() }
+    /** Keeps the red progress line (and, when shown, the time and ⏯) up to date while a video is on screen. */
     private val overlayTicker = object : Runnable {
         override fun run() {
-            if (!overlayShown) return
+            if (playerContainer.visibility != View.VISIBLE) return
             updateOverlay()
             main.postDelayed(this, 500)
         }
+    }
+
+    private fun startProgressTicker() {
+        main.removeCallbacks(overlayTicker)
+        // Clients only see where the song is; the host can drag the dot.
+        findViewById<SeekBar>(R.id.ovSeek).isEnabled = server != null
+        main.post(overlayTicker)
     }
 
     private val playerGestures by lazy {
@@ -637,10 +635,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         // Clients only see where the song is; the host controls it.
         val host = server != null
         findViewById<View>(R.id.overlayButtons).visibility = if (host) View.VISIBLE else View.GONE
-        findViewById<SeekBar>(R.id.ovSeek).isEnabled = host
         updateOverlay()
-        main.removeCallbacks(overlayTicker)
-        main.post(overlayTicker)
         scheduleOverlayHide()
     }
 
@@ -653,7 +648,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun hideOverlay() {
         overlayShown = false
         main.removeCallbacks(hideOverlayRunnable)
-        main.removeCallbacks(overlayTicker)
         if (::controlsOverlay.isInitialized) controlsOverlay.visibility = View.GONE
     }
 
@@ -732,7 +726,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         playerContainer.visibility = if (showPlayer) View.VISIBLE else View.GONE
         playerSpace.visibility = playerContainer.visibility
         videoView.visibility = if (kind == ItemKind.VIDEO) View.VISIBLE else View.GONE
-        if (!showPlayer) hideOverlay()
+        if (!showPlayer) hideOverlay() else startProgressTicker()
         refreshControls()
         sizePlayer()
     }
@@ -965,13 +959,17 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     /** "⏩ +15s" / "⏪ -10s" over the video (or a toast when no video is shown). */
     private fun showSkip(totalMs: Long) {
-        val text = if (totalMs >= 0) "⏩ +${totalMs / 1000}s" else "⏪ ${totalMs / 1000}s"
+        val text = if (totalMs >= 0) "+${totalMs / 1000}" else "${totalMs / 1000}"
         if (playerContainer.visibility != View.VISIBLE) {
-            Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, text + "s", Toast.LENGTH_SHORT).show()
             return
         }
         findViewById<TextView>(R.id.skipOverlay).apply {
             this.text = text
+            // Forward near the right edge, back near the left, like the YouTube app.
+            layoutParams = (layoutParams as FrameLayout.LayoutParams).apply {
+                gravity = Gravity.CENTER_VERTICAL or if (totalMs >= 0) Gravity.END else Gravity.START
+            }
             visibility = View.VISIBLE
         }
         main.removeCallbacks(hideSkip)

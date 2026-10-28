@@ -323,15 +323,15 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- "⏩ +15s" while skipping; repeated taps add up. -->
+        <!-- "+15" while skipping (on the tapped side); repeated taps add up. -->
         <TextView
             android:id="@+id/skipOverlay"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:background="#CC000000"
-            android:paddingHorizontal="20dp"
-            android:paddingVertical="10dp"
+            android:paddingHorizontal="28dp"
+            android:shadowColor="#CC000000"
+            android:shadowRadius="8"
             android:textColor="#FFFFFF"
             android:textSize="28sp"
             android:textStyle="bold"
@@ -423,17 +423,20 @@
                 android:textColor="#FFFFFF"
                 android:textSize="22sp" />
 
-            <SeekBar
-                android:id="@+id/ovSeek"
-                android:layout_width="match_parent"
-                android:layout_height="24dp"
-                android:layout_gravity="bottom"
-                android:paddingStart="0dp"
-                android:paddingEnd="0dp"
-                android:progressBackgroundTint="#80FFFFFF"
-                android:progressTint="#FF0000"
-                android:thumbTint="#FF0000" />
         </FrameLayout>
+
+        <!-- Red progress line, always shown; the host can drag its dot (everyone jumps there). -->
+        <SeekBar
+            android:id="@+id/ovSeek"
+            android:layout_width="match_parent"
+            android:layout_height="24dp"
+            android:layout_gravity="bottom"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:progressBackgroundTint="#80FFFFFF"
+            android:progressTint="#FF0000"
+            android:thumbTint="#FF0000" />
+
     </FrameLayout>
 
     <!-- Search screen header: logo, name, text and voice search. Shown only while searching; floats so it can slide
