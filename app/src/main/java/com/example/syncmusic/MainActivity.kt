@@ -1445,7 +1445,21 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     // ------------------------------------------------------- next-song preload
 
+    /** The WebView's own User-Agent (read on the main thread; used off it by YouTubeChrome). */
+    private val webViewUserAgent: String by lazy { android.webkit.WebSettings.getDefaultUserAgent(this) }
+    private var chromeResultShown = false
+
     private fun makeYouTubePlayer(view: YouTubePlayerView): YouTubeSyncPlayer {
+        webViewUserAgent  // resolve now, on the main thread
+        // Say once whether hiding YouTube's own buttons worked, so a failure isn't silent.
+        YouTubeChrome.onResult = { message ->
+            main.post {
+                if (!chromeResultShown) {
+                    chromeResultShown = true
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         lateinit var p: YouTubeSyncPlayer
         // Only the player on screen may drive the app; the spare one just preloads.
         p = YouTubeSyncPlayer(
@@ -1463,7 +1477,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
             // YouTube's own buttons would sit on top of the app's controls: hide them.
             override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest) =
-                YouTubeChrome.intercept(request)
+                YouTubeChrome.intercept(request, webViewUserAgent)
         }
         return p
     }
