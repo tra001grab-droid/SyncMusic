@@ -521,6 +521,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private var overlayShown = false
     private var seeking = false
     private val hideOverlayRunnable = Runnable { hideOverlay() }
+    /** A 3 s hide is pending (see scheduleOverlayHide). */
+    private var overlayHideScheduled = false
     /** Keeps the red progress line (and, when shown, the time and ⏯) up to date while a video is on screen. */
     private val overlayTicker = object : Runnable {
         override fun run() {
@@ -641,11 +643,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     /** Playing: hide after 3 s. Paused: stay until tapped. */
     private fun scheduleOverlayHide() {
         main.removeCallbacks(hideOverlayRunnable)
-        if (active?.isActive == true || server == null) main.postDelayed(hideOverlayRunnable, 3000)
+        overlayHideScheduled = active?.isActive == true || server == null
+        if (overlayHideScheduled) main.postDelayed(hideOverlayRunnable, 3000)
     }
 
     private fun hideOverlay() {
         overlayShown = false
+        overlayHideScheduled = false
         main.removeCallbacks(hideOverlayRunnable)
         if (::controlsOverlay.isInitialized) controlsOverlay.visibility = View.GONE
     }
@@ -656,6 +660,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val duration = p?.durationMs ?: 0L
         findViewById<TextView>(R.id.ovPlayPause).text = if (p?.isActive == true) "❚❚" else "▶"
         if (seeking) return
+        // Shown while the song was still loading/starting (so no hide was set): now it plays, hide in 3 s.
+        if (overlayShown && !overlayHideScheduled && p?.isActive == true) scheduleOverlayHide()
         findViewById<SeekBar>(R.id.ovSeek).apply {
             max = duration.coerceAtLeast(1L).toInt()
             progress = position.coerceIn(0L, duration).toInt()
