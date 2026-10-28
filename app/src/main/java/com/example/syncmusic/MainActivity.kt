@@ -457,7 +457,16 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         mini = on
         hideOverlay()
         playerCollapsed = false
+        // Back to full size: the search header takes its own room above the video again,
+        // otherwise it would come back over (and hide) the top of the video.
+        if (!on && searchPanel.isOpen) dockHeader()
         sizePlayer()
+    }
+
+    private fun dockHeader() {
+        headerHidden = false
+        searchHeader.animate().translationY(0f).setDuration(200).start()
+        animateHeaderSpace(searchHeader.height)
     }
 
     /** Search screen: results scrolled up → the player slides up out of view; back at the top → it returns. */
@@ -490,9 +499,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (!searchPanel.isOpen || fullscreen) return
         if (y <= 0) {
             // Back at the top: everything in its normal place.
-            headerHidden = false
-            searchHeader.animate().translationY(0f).setDuration(200).start()
-            animateHeaderSpace(searchHeader.height)
+            dockHeader()
             setPlayerCollapsed(false)
             return
         }
@@ -507,9 +514,15 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (playerContainer.visibility == View.VISIBLE) setMini(true)
         } else if (dy < -8 && headerHidden) {
             lastScrollChangeAt = now()
-            headerHidden = false
-            // Over the results, without pushing them down.
-            searchHeader.animate().translationY(0f).setDuration(200).start()
+            val fullVideo = playerContainer.visibility == View.VISIBLE && !mini
+            if (fullVideo) {
+                // A full-size video is right below: take room above it rather than covering it.
+                dockHeader()
+            } else {
+                headerHidden = false
+                // Over the results, without pushing them down.
+                searchHeader.animate().translationY(0f).setDuration(200).start()
+            }
         }
     }
 
