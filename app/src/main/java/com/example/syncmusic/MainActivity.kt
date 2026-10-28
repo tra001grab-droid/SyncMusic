@@ -594,12 +594,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<View>(R.id.ovPlayPause).setOnClickListener {
             if (active?.isActive == true) {
                 hostPause()  // paused: the controls stay on screen
+                updateOverlay()
             } else {
                 hostPlay()
-                main.removeCallbacks(hideOverlayRunnable)
-                main.postDelayed(hideOverlayRunnable, START_DELAY_MS + 3000)
+                hideOverlay()  // ▶ pressed: get out of the way at once
             }
-            updateOverlay()
         }
         findViewById<View>(R.id.ovPrev).setOnClickListener {
             if (currentIndex > 0) hostSelect(currentIndex - 1, autoPlay = true)
@@ -966,10 +965,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
         findViewById<TextView>(R.id.skipOverlay).apply {
             this.text = text
-            // Forward near the right edge, back near the left, like the YouTube app.
-            layoutParams = (layoutParams as FrameLayout.LayoutParams).apply {
-                gravity = Gravity.CENTER_VERTICAL or if (totalMs >= 0) Gravity.END else Gravity.START
-            }
+            layoutParams = (layoutParams as FrameLayout.LayoutParams).apply { gravity = Gravity.CENTER }
             visibility = View.VISIBLE
         }
         main.removeCallbacks(hideSkip)
@@ -1464,6 +1460,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 main.post { rebuildYouTubePlayer(p) }
                 return true
             }
+
+            // YouTube's own buttons would sit on top of the app's controls: hide them.
+            override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest) =
+                YouTubeChrome.intercept(request)
         }
         return p
     }
