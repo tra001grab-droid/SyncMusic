@@ -47,6 +47,38 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- Host only: every phone as a track, its gap to the host on a shared scale. -->
+            <LinearLayout
+                android:id="@+id/mixerTracksSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="📊 Sync Tracks — គម្លាតធៀបនឹងទូរស័ព្ទមេ"
+                    android:textColor="#FFFFFF"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/mixerTracks"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="4dp"
+                    android:text="◀ យឺតជាង Host · | Host · លឿនជាង Host ▶   (±300 ms)\n🟢 ≤60 ms  🟡 ≤150 ms  🔴 លើសនេះ — កែតាម ⏱ Delay ខាងក្រោម"
+                    android:textColor="#AAAAAA"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
             <!-- Host only: which phone the controls below apply to. Filled in code. -->
             <HorizontalScrollView
                 android:id="@+id/mixerDevicesScroll"

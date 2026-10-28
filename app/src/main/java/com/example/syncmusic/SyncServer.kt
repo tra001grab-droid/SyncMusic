@@ -14,6 +14,7 @@ import kotlin.concurrent.thread
  * messages carry it so clients ignore anything about a previous item.
  *   client -> host : PING <t0> | READY <version> | PROGRESS <version> <percent> | NEXTREADY <videoId>
  *                    IAM <name> | MIX <mix>   (mixer: who the phone is, its volume/EQ)
+ *                    STAT <gapMs> <rttMs>     (its current gap to the host, for the mixer's tracks)
  *   host -> client : HELLO <hostId> <hostName>   (first line after connecting)
  *                    PONG <t0> <hostNow>
  *                    ITEM <version> local <httpPort> <fileId> <audio|video> <title>
@@ -55,6 +56,10 @@ class SyncServer(
         @Volatile var name: String = address
         /** Its latest Mix.encode(), as reported by it (or as last set by the host). */
         @Volatile var mix: String? = null
+        /** Its latest gap to the host (ms; + = ahead) and round-trip time, and when they came. */
+        @Volatile var gapMs: Long? = null
+        @Volatile var rttMs: Long? = null
+        @Volatile var statAt: Long = 0
     }
 
     private val info = ConcurrentHashMap<PrintWriter, ClientInfo>()
@@ -161,6 +166,11 @@ class SyncServer(
                     "MIX" -> {
                         info[out]?.mix = parts.getOrNull(1)
                         onClientsChanged?.invoke()
+                    }
+                    "STAT" -> info[out]?.let { c ->
+                        c.gapMs = parts.getOrNull(1)?.toLongOrNull()
+                        c.rttMs = parts.getOrNull(2)?.toLongOrNull()
+                        c.statAt = now()
                     }
                     "PROGRESS" -> if (parts.getOrNull(1)?.toIntOrNull() == version) {
                         parts.getOrNull(2)?.toIntOrNull()?.let { progress[out] = it }

@@ -221,6 +221,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             devices = ::mixerDevices,
             getMix = ::mixerGet,
             setMix = ::mixerSet,
+            tracks = ::mixerTracks,
             note = {
                 val eq = when {
                     !mixer.eqAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត EQ ទេ — Volume នៅតែដំណើរការ"
@@ -1146,6 +1147,24 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             s.clientList().map { "c${it.key}" to "📱 ${it.name}" }
     }
 
+    /** Host: every phone's gap to the host for the mixer's track view (stale readings shown as unknown). */
+    private fun mixerTracks(): List<MixerPanel.Track> {
+        val s = server ?: return emptyList()
+        val self = mixer.current()
+        val host = MixerPanel.Track("${Build.MODEL} (Host)", true, 0, null, self.delayMs, self.bluetooth)
+        return listOf(host) + s.clientList().map { c ->
+            val mix = Mix.decode(c.mix)
+            val fresh = now() - c.statAt < 5000
+            MixerPanel.Track(
+                c.name, false,
+                gapMs = if (fresh) c.gapMs else null,
+                rttMs = c.rttMs,
+                delayMs = mix?.delayMs ?: 0,
+                bluetooth = mix?.bluetooth == true,
+            )
+        }
+    }
+
     private fun clientOf(deviceId: String) =
         server?.clientList()?.firstOrNull { "c${it.key}" == deviceId }
 
@@ -1416,6 +1435,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (syncErrors.size > 3) syncErrors.removeFirst()
             if (syncErrors.size < if (youtube) 3 else 2) return@post
             val error = syncErrors.sorted()[syncErrors.size / 2]
+            client?.let { it.sendStat(error, it.bestRtt) }
 
             // First steady reading after a jump shows how far buffering left us behind; learn it.
             if (measuringSeekLead && youtube) {

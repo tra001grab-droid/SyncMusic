@@ -118,6 +118,9 @@ class SyncClient(
 
     fun sendMix(mix: Mix) = send("MIX ${mix.encode()}")
 
+    /** Our current gap to the host (+ = ahead) and round-trip time, for the host's track view. */
+    fun sendStat(gapMs: Long, rttMs: Long) = send("STAT $gapMs $rttMs")
+
     private fun startPinging() = thread(name = "sync-ping", isDaemon = true) {
         var count = 0
         while (running) {

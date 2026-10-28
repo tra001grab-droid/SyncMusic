@@ -25,7 +25,26 @@ class MixerPanel(
     private val setMix: (deviceId: String, mix: Mix) -> Unit,
     /** Note shown under the EQ (e.g. that it can't change YouTube on this phone). */
     private val note: () -> String,
+    /** Host only: every phone's track (empty on a client, which hides the section). */
+    private val tracks: () -> List<Track> = { emptyList() },
 ) {
+    /** One phone in the track view. [gapMs]: + = ahead of the host, null = no reading yet. */
+    data class Track(
+        val name: String,
+        val isHost: Boolean,
+        val gapMs: Long?,
+        val rttMs: Long?,
+        val delayMs: Int,
+        val bluetooth: Boolean,
+    )
+
+    private val trackTicker = object : Runnable {
+        override fun run() {
+            if (!isOpen) return
+            renderTracks()
+            root.postDelayed(this, 1000)
+        }
+    }
     companion object {
         const val SELF = "self"
         const val ALL = "all"
@@ -118,6 +137,46 @@ class MixerPanel(
     fun show() {
         root.visibility = View.VISIBLE
         refresh(force = true)
+        root.removeCallbacks(trackTicker)
+        root.post(trackTicker)
+    }
+
+    private fun renderTracks() {
+        val list = tracks()
+        val section = root.findViewById<View>(R.id.mixerTracksSection)
+        section.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+        val box: LinearLayout = root.findViewById(R.id.mixerTracks)
+        // Rebuild rows only when the phones change; otherwise just update them.
+        if (box.childCount != list.size) {
+            box.removeAllViews()
+            repeat(list.size) { box.addView(makeTrackRow()) }
+        }
+        list.forEachIndexed { i, track -> bindTrackRow(box.getChildAt(i) as LinearLayout, track) }
+    }
+
+    private fun makeTrackRow() = LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(8), 0, 0)
+        addView(TextView(activity).apply { setTextColor(Color.WHITE); textSize = 14f })
+        addView(TrackBarView(activity), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)))
+        addView(TextView(activity).apply { setTextColor(Color.LTGRAY); textSize = 12f })
+    }
+
+    private fun bindTrackRow(row: LinearLayout, track: Track) {
+        (row.getChildAt(0) as TextView).text = (if (track.isHost) "👑 " else "📱 ") + track.name +
+            if (track.bluetooth) "  🎧" else ""
+        (row.getChildAt(1) as TrackBarView).errorMs = if (track.isHost) 0 else track.gapMs
+        val gap = track.gapMs
+        val gapText = when {
+            track.isHost -> "0 ms (ទូរស័ព្ទមេ)"
+            gap == null -> "— (មិនទាន់ចាក់)"
+            gap > 0 -> "+$gap ms លឿនជាង"
+            gap < 0 -> "$gap ms យឺតជាង"
+            else -> "0 ms"
+        }
+        val rtt = track.rttMs?.let { " · RTT $it ms" } ?: ""
+        val delay = if (track.delayMs != 0) " · ⏱ ${if (track.delayMs > 0) "+" else ""}${track.delayMs} ms" else ""
+        (row.getChildAt(2) as TextView).text = gapText + rtt + delay
     }
 
     fun hide() {

@@ -375,6 +375,8 @@ final class AppModel: ObservableObject {
         if syncErrors.count > 3 { syncErrors.removeFirst() }
         if syncErrors.count < (isYouTube ? 3 : 2) { return }
         let error = syncErrors.sorted()[syncErrors.count / 2]
+        // For the host's track view: our gap (+ = ahead) and round-trip time.
+        send("STAT \(error) \(connection?.bestRtt ?? 0)")
 
         // First steady reading after a jump shows how far buffering left us behind; learn it.
         if measuringSeekLead && isYouTube {
