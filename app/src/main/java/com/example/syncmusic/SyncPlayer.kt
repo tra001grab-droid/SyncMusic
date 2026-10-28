@@ -17,6 +17,8 @@ import java.io.File
 interface SyncPlayer {
     /** Current playback position in ms. */
     val position: Long
+    /** Length of the current song/video in ms (0 while unknown). */
+    val durationMs: Long
     /** True once playback was requested (even while still buffering). */
     val isActive: Boolean
     /** True only while audio is actually advancing (not buffering, not paused). */
@@ -54,6 +56,7 @@ class LocalPlayer(context: Context, audioSessionId: Int, onEnded: () -> Unit) : 
     }
 
     override val position get() = exo.currentPosition
+    override val durationMs get() = exo.duration.coerceAtLeast(0L)
     override val isActive get() = exo.playWhenReady
     override val isPlaying get() = exo.isPlaying
     override val steadyMs get() = if (exo.isPlaying && playingSince > 0) now() - playingSince else 0L
@@ -205,6 +208,7 @@ class YouTubeSyncPlayer(
             if (!playing || anchors.isEmpty()) return (lastSecond * 1000).toLong()
             return now() - anchors.minOf { it.second }
         }
+    override val durationMs get() = (durationSec * 1000).toLong()
     override val isActive get() = requested
     override val isPlaying get() = playing
     override val steadyMs get() = if (playing && playingSince > 0 && !isNudging) now() - playingSince else 0L

@@ -5,7 +5,11 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.animation.ValueAnimator
 import android.content.res.ColorStateList
+import android.view.GestureDetector
+import android.view.Gravity
+import android.view.MotionEvent
 import android.app.AlertDialog
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
@@ -58,7 +62,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val POS_INTERVAL_MS = 1000L
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
         private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
-        private const val SKIP_SETTLE_MS = 700L        // wait this long after the last skip tap
+        private const val SKIP_SETTLE_MS = 1000L       // wait this long after the last skip (double) tap
         private const val READY_TIMEOUT_MS = 60_000L   // max wait for clients before auto-play
     }
 
@@ -69,7 +73,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private lateinit var videoView: androidx.media3.ui.PlayerView
     private lateinit var playerContainer: FrameLayout
     private var fullscreen = false
-    private var savedVisibility = emptyMap<View, Int>()
     private var searchHiddenRows = emptyMap<View, Int>()
     private var multicastLock: WifiManager.MulticastLock? = null
     private lateinit var searchPanel: SearchPanel
@@ -173,13 +176,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         localPlayer.attach(videoView)
         ytPlayer = makeYouTubePlayer(findViewById(R.id.youtubeView))
         ytSpare = makeYouTubePlayer(findViewById(R.id.youtubeView2))
-        // Taps on the video would pause YouTube behind the app's back; route them through the app instead.
-        findViewById<View>(R.id.playerTouchGuard).setOnClickListener {
-            when {
-                server != null -> if (active?.isActive == true) hostPause() else hostPlay()
-                else -> Toast.makeText(this, "Host ជាអ្នកបញ្ជាការចាក់", Toast.LENGTH_SHORT).show()
-            }
-        }
+        setUpPlayerUi()
 
         backgroundYouTube = prefs.getBoolean("yt_background", true)
         ytPlayer.view.enableBackgroundPlayback(backgroundYouTube)
@@ -257,6 +254,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 if (index >= 0) hostSelect(index, autoPlay = true)
             },
             suggestionsView = findViewById(R.id.suggestionsList),
+            onResultsScroll = ::onResultsScroll,
         )
         searchPanel.hide()
         sizePlayer()
@@ -330,7 +328,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun showPanel(host: Boolean) {
         findViewById<View>(R.id.modePanel).visibility = View.GONE
         findViewById<View>(R.id.hostPanel).visibility = if (host) View.VISIBLE else View.GONE
-        findViewById<View>(R.id.hostControls).visibility = if (host) View.VISIBLE else View.GONE
+        refreshControls()
         findViewById<View>(R.id.clientPanel).visibility = if (host) View.GONE else View.VISIBLE
     }
 
@@ -355,12 +353,18 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<View>(R.id.hostPanel).visibility = if (open) View.GONE else View.VISIBLE
         // The "សិង្ហនគរ" header takes the top: hide the app bar and the host's status rows.
         val rows = listOf(R.id.status, R.id.switchBackground, R.id.switchPreload, R.id.nowPlaying).map { findViewById<View>(it) }
+        headerHidden = false
+        searchHeader.translationY = 0f
+        playerCollapsed = false
         if (open) {
             searchHiddenRows = rows.associateWith { it.visibility }
             rows.forEach { it.visibility = View.GONE }
             supportActionBar?.hide()
             searchPanel.show()
+            // Room for the floating header once it has been measured.
+            searchHeader.post { headerSpace.layoutParams = headerSpace.layoutParams.apply { height = searchHeader.height } }
         } else {
+            headerSpace.layoutParams = headerSpace.layoutParams.apply { height = 0 }
             searchHiddenRows.forEach { (view, visibility) -> view.visibility = visibility }
             searchHiddenRows = emptyMap()
             supportActionBar?.show()
@@ -376,29 +380,290 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         findViewById<View>(R.id.root).setPadding(pad, pad, pad, pad)
     }
 
-    /**
-     * Full width normally; about half width while searching so the results get the space.
-     * Sizes are explicit 16:9 so the player can never grow and push the controls off screen.
-     */
-    private fun sizePlayer() {
-        if (fullscreen) return
+    // --------------------------------------------------------------- player placement
+    //
+    // The player floats above the page (so its web views never move). In the page, playerSpace
+    // keeps its room; the player follows it, slides up with it when the results are scrolled,
+    // or becomes a small mini player in the corner, or fills the screen.
+
+    private lateinit var frameRoot: FrameLayout
+    private lateinit var playerSpace: View
+    private lateinit var headerSpace: View
+    private lateinit var searchHeader: View
+    private lateinit var controlsOverlay: View
+    private var mini = false
+    /** Search screen: the player has slid up with the results. */
+    private var playerCollapsed = false
+    private var headerHidden = false
+    private var lastScrollChangeAt = 0L
+    private var spaceAnimator: ValueAnimator? = null
+    private var headerSpaceAnimator: ValueAnimator? = null
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** Width of the player in the page: full width on the search screen, inside the margins otherwise. */
+    private fun dockedWidth(): Int {
         val metrics = resources.displayMetrics
         val screenWidth = minOf(metrics.widthPixels, metrics.heightPixels)  // the app is portrait
-        // Full width on the search screen (no margins there), like the YouTube app.
-        val width = if (searchPanel.isOpen) screenWidth else screenWidth - (32 * metrics.density).toInt()
-        // Exact height on the container too: with wrap_content, its match_parent tap guard would
-        // stretch it to all free space and push the controls off screen.
-        playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
-            this.width = width
-            height = width * 9 / 16
-            weight = 0f
+        return if (searchPanel.isOpen) screenWidth else screenWidth - dp(32)
+    }
+
+    private fun dockedHeight() = dockedWidth() * 9 / 16
+
+    private fun sizePlayer() {
+        if (fullscreen) return
+        playerSpace.layoutParams = playerSpace.layoutParams.apply {
+            width = dockedWidth()
+            height = if (mini || playerCollapsed) 0 else dockedHeight()
         }
-        for (v in listOf(ytPlayer.view, ytSpare.view)) {
-            v.layoutParams = v.layoutParams.apply {
-                this.width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = width * 9 / 16
+        placePlayer()
+    }
+
+    /** Put the floating player where the current mode says. */
+    private fun placePlayer() {
+        val lp = playerContainer.layoutParams as FrameLayout.LayoutParams
+        lp.gravity = Gravity.TOP or Gravity.START
+        when {
+            fullscreen -> {
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.leftMargin = 0
+                lp.topMargin = 0
+            }
+            mini -> {
+                // About thumb size, bottom-right, above the bottom buttons.
+                val w = dp(168)
+                val h = w * 9 / 16
+                lp.width = w
+                lp.height = h
+                lp.leftMargin = (frameRoot.width - w - dp(12)).coerceAtLeast(0)
+                lp.topMargin = (frameRoot.height - h - dp(76)).coerceAtLeast(0)
+            }
+            else -> {
+                // Follow the room in the page; when that room shrinks, slide up with it.
+                val root = findViewById<View>(R.id.root)
+                val h = dockedHeight()
+                lp.width = dockedWidth()
+                lp.height = h
+                lp.leftMargin = root.left + playerSpace.left
+                lp.topMargin = root.top + playerSpace.top + playerSpace.height - h
             }
         }
+        playerContainer.layoutParams = lp
+    }
+
+    private fun setMini(on: Boolean) {
+        if (on == mini || fullscreen) return
+        mini = on
+        hideOverlay()
+        playerCollapsed = false
+        sizePlayer()
+    }
+
+    /** Search screen: results scrolled up → the player slides up out of view; back at the top → it returns. */
+    private fun setPlayerCollapsed(collapsed: Boolean) {
+        if (collapsed == playerCollapsed || mini || fullscreen) return
+        if (collapsed && (!searchPanel.isOpen || playerContainer.visibility != View.VISIBLE)) return
+        playerCollapsed = collapsed
+        if (collapsed) hideOverlay()
+        spaceAnimator?.cancel()
+        spaceAnimator = ValueAnimator.ofInt(playerSpace.layoutParams.height, if (collapsed) 0 else dockedHeight()).apply {
+            duration = 200
+            addUpdateListener { anim -> playerSpace.layoutParams = playerSpace.layoutParams.apply { height = anim.animatedValue as Int } }
+            start()
+        }
+    }
+
+    // -------------------------------------------------------------- search header
+
+    private fun animateHeaderSpace(target: Int) {
+        headerSpaceAnimator?.cancel()
+        headerSpaceAnimator = ValueAnimator.ofInt(headerSpace.layoutParams.height, target).apply {
+            duration = 200
+            addUpdateListener { anim -> headerSpace.layoutParams = headerSpace.layoutParams.apply { height = anim.animatedValue as Int } }
+            start()
+        }
+    }
+
+    /** Results scrolled: up → header and player slide away; down → header comes back over the results. */
+    private fun onResultsScroll(y: Int, dy: Int) {
+        if (!searchPanel.isOpen || fullscreen) return
+        if (y <= 0) {
+            // Back at the top: everything in its normal place.
+            headerHidden = false
+            searchHeader.animate().translationY(0f).setDuration(200).start()
+            animateHeaderSpace(searchHeader.height)
+            setPlayerCollapsed(false)
+            return
+        }
+        // Resizing moves the page a little; don't take that for the user's scroll.
+        if (now() - lastScrollChangeAt < 300) return
+        if (dy > 8 && !headerHidden) {
+            lastScrollChangeAt = now()
+            headerHidden = true
+            searchHeader.animate().translationY(-searchHeader.height.toFloat()).setDuration(200).start()
+            animateHeaderSpace(0)
+            setPlayerCollapsed(true)
+        } else if (dy < -8 && headerHidden) {
+            lastScrollChangeAt = now()
+            headerHidden = false
+            // Over the results, without pushing them down.
+            searchHeader.animate().translationY(0f).setDuration(200).start()
+        }
+    }
+
+    // ------------------------------------------------------- on-video controls
+
+    private var overlayShown = false
+    private var seeking = false
+    private val hideOverlayRunnable = Runnable { hideOverlay() }
+    private val overlayTicker = object : Runnable {
+        override fun run() {
+            if (!overlayShown) return
+            updateOverlay()
+            main.postDelayed(this, 500)
+        }
+    }
+
+    private val playerGestures by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                when {
+                    mini -> setMini(false)
+                    overlayShown -> hideOverlay()
+                    else -> showOverlay()
+                }
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                // Double tap: right half +5 s, left half -5 s; more double taps add up (+10, +15 …).
+                if (mini || server == null || currentIndex < 0) return false
+                hideOverlay()
+                queueSkip(if (e.x > playerContainer.width / 2f) 5000 else -5000)
+                return true
+            }
+
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                // Drag the video down → mini player.
+                val start = e1 ?: return false
+                val down = e2.y - start.y
+                if (!mini && !fullscreen && down > dp(60) && down > abs(e2.x - start.x)) {
+                    setMini(true)
+                    return true
+                }
+                return false
+            }
+        })
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun setUpPlayerUi() {
+        frameRoot = findViewById(R.id.frameRoot)
+        playerSpace = findViewById(R.id.playerSpace)
+        headerSpace = findViewById(R.id.searchHeaderSpace)
+        searchHeader = findViewById(R.id.searchHeader)
+        controlsOverlay = findViewById(R.id.controlsOverlay)
+        val gestures = View.OnTouchListener { _, event -> playerGestures.onTouchEvent(event) }
+        findViewById<View>(R.id.playerTouchGuard).setOnTouchListener(gestures)
+        controlsOverlay.setOnTouchListener(gestures)
+        // The player follows its room in the page whenever the page moves.
+        playerSpace.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> if (!mini && !fullscreen) placePlayer() }
+        frameRoot.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> if (mini) placePlayer() }
+        // The search box (🔍) changes the header's height: keep its room in step while it's docked.
+        searchHeader.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (searchPanel.isOpen && !headerHidden && bottom - top != oldBottom - oldTop) {
+                headerSpace.layoutParams = headerSpace.layoutParams.apply { height = bottom - top }
+            }
+        }
+
+        findViewById<View>(R.id.ovPlayPause).setOnClickListener {
+            if (active?.isActive == true) {
+                hostPause()  // paused: the controls stay on screen
+            } else {
+                hostPlay()
+                main.removeCallbacks(hideOverlayRunnable)
+                main.postDelayed(hideOverlayRunnable, START_DELAY_MS + 3000)
+            }
+            updateOverlay()
+        }
+        findViewById<View>(R.id.ovPrev).setOnClickListener {
+            if (currentIndex > 0) hostSelect(currentIndex - 1, autoPlay = true)
+            scheduleOverlayHide()
+        }
+        findViewById<View>(R.id.ovNext).setOnClickListener {
+            if (currentIndex + 1 < playlist.size) hostSelect(currentIndex + 1, autoPlay = true)
+            scheduleOverlayHide()
+        }
+        findViewById<SeekBar>(R.id.ovSeek).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser) setOverlayTime(progress.toLong(), bar.max.toLong())
+            }
+
+            override fun onStartTrackingTouch(bar: SeekBar) {
+                seeking = true
+                main.removeCallbacks(hideOverlayRunnable)
+            }
+
+            override fun onStopTrackingTouch(bar: SeekBar) {
+                seeking = false
+                // Dragged the red dot: every phone jumps there together.
+                val target = bar.progress.toLong()
+                if (active?.isActive == true) hostPlay(target) else active?.seekTo(target)
+                scheduleOverlayHide()
+            }
+        })
+    }
+
+    private fun showOverlay() {
+        overlayShown = true
+        controlsOverlay.visibility = View.VISIBLE
+        // Clients only see where the song is; the host controls it.
+        val host = server != null
+        findViewById<View>(R.id.overlayButtons).visibility = if (host) View.VISIBLE else View.GONE
+        findViewById<SeekBar>(R.id.ovSeek).isEnabled = host
+        updateOverlay()
+        main.removeCallbacks(overlayTicker)
+        main.post(overlayTicker)
+        scheduleOverlayHide()
+    }
+
+    /** Playing: hide after 3 s. Paused: stay until tapped. */
+    private fun scheduleOverlayHide() {
+        main.removeCallbacks(hideOverlayRunnable)
+        if (active?.isActive == true || server == null) main.postDelayed(hideOverlayRunnable, 3000)
+    }
+
+    private fun hideOverlay() {
+        overlayShown = false
+        main.removeCallbacks(hideOverlayRunnable)
+        main.removeCallbacks(overlayTicker)
+        if (::controlsOverlay.isInitialized) controlsOverlay.visibility = View.GONE
+    }
+
+    private fun updateOverlay() {
+        val p = active
+        val position = p?.position ?: 0L
+        val duration = p?.durationMs ?: 0L
+        findViewById<TextView>(R.id.ovPlayPause).text = if (p?.isActive == true) "❚❚" else "▶"
+        if (seeking) return
+        findViewById<SeekBar>(R.id.ovSeek).apply {
+            max = duration.coerceAtLeast(1L).toInt()
+            progress = position.coerceIn(0L, duration).toInt()
+        }
+        setOverlayTime(position, duration)
+    }
+
+    private fun setOverlayTime(position: Long, duration: Long) {
+        findViewById<TextView>(R.id.ovTime).text = "${formatTime(position.coerceAtLeast(0))} / ${formatTime(duration)}"
+    }
+
+    /** The button bar is only needed when there's no video to tap (songs). */
+    private fun refreshControls() {
+        findViewById<View>(R.id.hostControls).visibility =
+            if (hosting && playerContainer.visibility != View.VISIBLE) View.VISIBLE else View.GONE
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -406,44 +671,34 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         sizePlayer()
     }
 
-    /** Our own fullscreen: only the player, landscape, system bars hidden. The WebView is never moved. */
+    /** Our own fullscreen: the floating player fills the screen, landscape, system bars hidden. */
     private fun setFullscreen(on: Boolean) {
         if (on == fullscreen) return
+        if (on && mini) setMini(false)
         fullscreen = on
-        val root = findViewById<LinearLayout>(R.id.root)
+        val root = findViewById<View>(R.id.root)
         val bars = WindowInsetsControllerCompat(window, window.decorView)
         val button = findViewById<Button>(R.id.btnFullscreen)
         if (on) {
-            // Keep the host's control bar under the video in fullscreen too.
-            val controls = findViewById<View>(R.id.hostControls)
-            savedVisibility = (0 until root.childCount).map { root.getChildAt(it) }
-                .filter { it !== playerContainer && it !== controls }
-                .associateWith { it.visibility }
-            savedVisibility.keys.forEach { it.visibility = View.GONE }
-            root.setPadding(0, 0, 0, 0)
-            playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
-                width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = 0
-                weight = 1f
-            }
-            for (v in listOf(ytPlayer.view, ytSpare.view)) {
-                v.layoutParams = v.layoutParams.apply { height = ViewGroup.LayoutParams.MATCH_PARENT }
-            }
+            root.visibility = View.INVISIBLE
+            if (searchPanel.isOpen) searchHeader.visibility = View.GONE
             supportActionBar?.hide()
             WindowCompat.setDecorFitsSystemWindows(window, false)
             bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             bars.hide(WindowInsetsCompat.Type.systemBars())
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             button.text = "✕"
+            placePlayer()
         } else {
-            savedVisibility.forEach { (view, visibility) -> view.visibility = visibility }
+            root.visibility = View.VISIBLE
+            if (searchPanel.isOpen) searchHeader.visibility = View.VISIBLE
             applyRootPadding()
             if (!searchPanel.isOpen) supportActionBar?.show()
             WindowCompat.setDecorFitsSystemWindows(window, true)
             bars.show(WindowInsetsCompat.Type.systemBars())
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             button.text = "⛶"
-            // Width depends on the (now portrait) screen size, so wait for the rotation first.
+            // Sizes depend on the (now portrait) screen, so wait for the rotation first.
             root.post { sizePlayer() }
         }
     }
@@ -461,7 +716,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val showPlayer = title != null && kind != ItemKind.AUDIO
         if (!showPlayer) setFullscreen(false)
         playerContainer.visibility = if (showPlayer) View.VISIBLE else View.GONE
+        playerSpace.visibility = playerContainer.visibility
         videoView.visibility = if (kind == ItemKind.VIDEO) View.VISIBLE else View.GONE
+        if (!showPlayer) hideOverlay()
+        refreshControls()
+        sizePlayer()
     }
 
     private fun kindOf(item: PlaylistItem.Local) = if (item.isVideo) ItemKind.VIDEO else ItemKind.AUDIO
@@ -1325,8 +1584,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val s = server
         val id = nextVideoId
         val ready = s != null && id != null && hostNextReady && s.nextReadyCount(id) >= s.clientCount
-        findViewById<Button>(R.id.btnNext).backgroundTintList =
-            if (ready) ColorStateList.valueOf(0xFF2E7D32.toInt()) else null
+        val green = if (ready) ColorStateList.valueOf(0xFF2E7D32.toInt()) else null
+        findViewById<Button>(R.id.btnNext).backgroundTintList = green
+        findViewById<View>(R.id.ovNext).backgroundTintList = green
     }
 
     override fun onNext(videoId: String) {

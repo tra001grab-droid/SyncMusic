@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/frameRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
@@ -11,96 +12,11 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <!-- Search screen header: logo, name, text and voice search. Shown only while searching. -->
-    <LinearLayout
-        android:id="@+id/searchHeader"
+    <!-- Room for the search header (which floats above, see the end of this file). -->
+    <View
+        android:id="@+id/searchHeaderSpace"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#0F0F0F"
-        android:orientation="vertical"
-        android:visibility="gone">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp">
-
-            <TextView
-                android:layout_width="34dp"
-                android:layout_height="34dp"
-                android:background="@drawable/logo_circle"
-                android:gravity="center"
-                android:paddingStart="3dp"
-                android:text="▶"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:paddingStart="10dp"
-                android:text="សិង្ហនគរ"
-                android:textColor="#FFFFFF"
-                android:textSize="22sp"
-                android:textStyle="bold" />
-
-            <Button
-                android:id="@+id/btnVoice"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:minWidth="0dp"
-                android:padding="0dp"
-                android:text="🎤"
-                android:textSize="22sp" />
-
-            <Button
-                android:id="@+id/btnSearchToggle"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:minWidth="0dp"
-                android:padding="0dp"
-                android:text="🔍"
-                android:textSize="22sp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/searchBar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp"
-            android:paddingBottom="8dp">
-
-            <EditText
-                android:id="@+id/query"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:background="@drawable/search_field"
-                android:hint="ស្វែងរកបទចម្រៀង ឬអ្នកចម្រៀង"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:paddingHorizontal="16dp"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#AAAAAA" />
-
-            <Button
-                android:id="@+id/btnGo"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:minWidth="0dp"
-                android:padding="0dp"
-                android:text="🔍"
-                android:textSize="22sp" />
-        </LinearLayout>
-    </LinearLayout>
+        android:layout_height="0dp" />
 
     <TextView
         android:id="@+id/status"
@@ -169,105 +85,13 @@
         android:paddingBottom="8dp"
         android:visibility="gone" />
 
-    <!-- Shown only while the current item is a YouTube video. -->
-    <FrameLayout
-        android:id="@+id/playerContainer"
+    <!-- Room for the player, which floats above the page (see playerContainer below) so it can
+         slide away, shrink to a mini player or go fullscreen without moving its web views. -->
+    <View
+        android:id="@+id/playerSpace"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:background="#000000"
-        android:visibility="gone">
-
-        <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
-            android:id="@+id/youtubeView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            app:enableAutomaticInitialization="false" />
-
-        <!-- Second player that preloads the next song. Kept "visible" but transparent: a hidden
-             WebView may stop buffering. The two swap roles when the next song starts. -->
-        <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
-            android:id="@+id/youtubeView2"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:alpha="0"
-            app:enableAutomaticInitialization="false" />
-
-        <!-- Video files (mp4…) from the library; covers the YouTube players while shown. -->
-        <androidx.media3.ui.PlayerView
-            android:id="@+id/videoView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#000000"
-            android:visibility="gone"
-            app:resize_mode="fit"
-            app:use_controller="false" />
-
-        <!-- "កំពុងទាញយក" with a spinner while the video preloads before everyone starts together. -->
-        <LinearLayout
-            android:id="@+id/preloadOverlay"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:background="#CC000000"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:visibility="gone">
-
-            <ProgressBar
-                style="?android:attr/progressBarStyleSmall"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:indeterminate="true"
-                android:indeterminateTint="#FFFFFF" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="10dp"
-                android:text="កំពុងទាញយក"
-                android:textColor="#FFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <!-- "⏩ +15s" while skipping; repeated taps add up. -->
-        <TextView
-            android:id="@+id/skipOverlay"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:background="#CC000000"
-            android:paddingHorizontal="20dp"
-            android:paddingVertical="10dp"
-            android:textColor="#FFFFFF"
-            android:textSize="28sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
-
-        <!-- Catches taps so they go through the app (host: play/pause for everyone). -->
-        <View
-            android:id="@+id/playerTouchGuard"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clickable="true"
-            android:focusable="true" />
-
-        <Button
-            android:id="@+id/btnFullscreen"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_gravity="bottom|end"
-            android:layout_margin="4dp"
-            android:background="#99000000"
-            android:padding="0dp"
-            android:text="⛶"
-            android:textColor="#FFFFFF"
-            android:textSize="22sp" />
-    </FrameLayout>
+        android:layout_height="0dp"
+        android:visibility="gone" />
 
     <!-- Host playback controls: right under the player so they stay visible in the playlist,
          in search and in fullscreen. -->
@@ -433,6 +257,279 @@
 
     </LinearLayout>
 </LinearLayout>
+
+    <!-- Shown only while the current item is a YouTube video. -->
+    <FrameLayout
+        android:id="@+id/playerContainer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_gravity="top|start"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+            android:id="@+id/youtubeView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
+            app:enableAutomaticInitialization="false" />
+
+        <!-- Second player that preloads the next song. Kept "visible" but transparent: a hidden
+             WebView may stop buffering. The two swap roles when the next song starts. -->
+        <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+            android:id="@+id/youtubeView2"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
+            android:alpha="0"
+            app:enableAutomaticInitialization="false" />
+
+        <!-- Video files (mp4…) from the library; covers the YouTube players while shown. -->
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/videoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000"
+            android:visibility="gone"
+            app:resize_mode="fit"
+            app:use_controller="false" />
+
+        <!-- "កំពុងទាញយក" with a spinner while the video preloads before everyone starts together. -->
+        <LinearLayout
+            android:id="@+id/preloadOverlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="#CC000000"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:indeterminate="true"
+                android:indeterminateTint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="10dp"
+                android:text="កំពុងទាញយក"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- "⏩ +15s" while skipping; repeated taps add up. -->
+        <TextView
+            android:id="@+id/skipOverlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="#CC000000"
+            android:paddingHorizontal="20dp"
+            android:paddingVertical="10dp"
+            android:textColor="#FFFFFF"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Taps / double-taps / drag-down on the video (see MainActivity.playerGestures). -->
+        <View
+            android:id="@+id/playerTouchGuard"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:focusable="true" />
+
+
+        <!-- On-video controls like the YouTube app (tap the video): ⏮ ⏯ ⏭, time, red seek bar. -->
+        <FrameLayout
+            android:id="@+id/controlsOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#59000000"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/overlayButtons"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/ovPrev"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="20dp"
+                android:background="@drawable/circle_dark"
+                android:gravity="center"
+                android:text="|◀"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/ovPlayPause"
+                android:layout_width="68dp"
+                android:layout_height="68dp"
+                android:layout_marginHorizontal="20dp"
+                android:background="@drawable/circle_dark"
+                android:gravity="center"
+                android:text="❚❚"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/ovNext"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="20dp"
+                android:background="@drawable/circle_dark"
+                android:gravity="center"
+                android:text="▶|"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/ovTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_marginStart="10dp"
+                android:layout_marginBottom="24dp"
+                android:background="#80000000"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="2dp"
+                android:text="0:00 / 0:00"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnFullscreen"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_gravity="bottom|end"
+                android:layout_marginBottom="16dp"
+                android:background="@android:color/transparent"
+                android:padding="0dp"
+                android:text="⛶"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp" />
+
+            <SeekBar
+                android:id="@+id/ovSeek"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:layout_gravity="bottom"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:progressBackgroundTint="#80FFFFFF"
+                android:progressTint="#FF0000"
+                android:thumbTint="#FF0000" />
+        </FrameLayout>
+    </FrameLayout>
+
+    <!-- Search screen header: logo, name, text and voice search. Shown only while searching; floats so it can slide
+         away while scrolling and come back over the results without pushing them. -->
+    <LinearLayout
+        android:id="@+id/searchHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:elevation="4dp"
+        android:background="#0F0F0F"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp">
+
+            <TextView
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="@drawable/logo_circle"
+                android:gravity="center"
+                android:paddingStart="3dp"
+                android:text="▶"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingStart="10dp"
+                android:text="សិង្ហនគរ"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnVoice"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="🎤"
+                android:textSize="22sp" />
+
+            <Button
+                android:id="@+id/btnSearchToggle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="🔍"
+                android:textSize="22sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/searchBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingBottom="8dp">
+
+            <EditText
+                android:id="@+id/query"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:background="@drawable/search_field"
+                android:hint="ស្វែងរកបទចម្រៀង ឬអ្នកចម្រៀង"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:paddingHorizontal="16dp"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#AAAAAA" />
+
+            <Button
+                android:id="@+id/btnGo"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="🔍"
+                android:textSize="22sp" />
+        </LinearLayout>
+    </LinearLayout>
+
 
 <!-- Search suggestions while typing; placed over the player and results (below the header). -->
 <ListView
