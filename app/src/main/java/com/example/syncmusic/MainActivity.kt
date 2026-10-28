@@ -193,6 +193,18 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 prefs.edit().putBoolean("yt_background", checked).apply()
             }
         }
+        YouTubeSyncPlayer.preloadEnabled = prefs.getBoolean("preload_20", true)
+        findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchPreload).apply {
+            isChecked = YouTubeSyncPlayer.preloadEnabled
+            setOnCheckedChangeListener { _, checked ->
+                YouTubeSyncPlayer.preloadEnabled = checked
+                prefs.edit().putBoolean("preload_20", checked).apply()
+                // Off: also stop preloading the next song (saves internet).
+                if (!checked) {
+                    if (server != null) resetNext() else ytSpare.stop()
+                }
+            }
+        }
 
         val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         multicastLock = wifi.createMulticastLock("syncmusic").apply { setReferenceCounted(false); acquire() }
@@ -342,7 +354,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (open == searchPanel.isOpen) return
         findViewById<View>(R.id.hostPanel).visibility = if (open) View.GONE else View.VISIBLE
         // The "សិង្ហនគរ" header takes the top: hide the app bar and the host's status rows.
-        val rows = listOf(R.id.status, R.id.switchBackground, R.id.nowPlaying).map { findViewById<View>(it) }
+        val rows = listOf(R.id.status, R.id.switchBackground, R.id.switchPreload, R.id.nowPlaying).map { findViewById<View>(it) }
         if (open) {
             searchHiddenRows = rows.associateWith { it.visibility }
             rows.forEach { it.visibility = View.GONE }
@@ -1266,7 +1278,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     /** Host: the current song is downloaded, so preload 20% of the next one on every phone. */
     private fun prepareNext() {
-        if (server == null || nextVideoId != null || !backgroundPreloadAllowed) return
+        if (server == null || nextVideoId != null || !backgroundPreloadAllowed || !YouTubeSyncPlayer.preloadEnabled) return
         val current = playlist.getOrNull(currentIndex) as? PlaylistItem.YouTube ?: return
         val next = playlist.getOrNull(currentIndex + 1)
         when {
@@ -1319,7 +1331,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     override fun onNext(videoId: String) {
         main.post {
-            if (!backgroundPreloadAllowed) return@post
+            if (!backgroundPreloadAllowed || !YouTubeSyncPlayer.preloadEnabled) return@post
             if (ytSpare.isPrepared(videoId)) {
                 client?.sendNextReady(videoId)
             } else if (!ytSpare.hasVideo(videoId)) {

@@ -105,6 +105,12 @@ class YouTubeSyncPlayer(
         /** Buffer this much of the video before reporting ready, so all phones start smoothly. */
         const val PRELOAD_FRACTION = 0.2f
         const val PRELOAD_TIMEOUT_MS = 60_000L
+
+        /**
+         * Settings switch "download 20% first". Off: a video is only cued and reported ready at
+         * once (starts sooner, may stutter at first), and the next song isn't preloaded.
+         */
+        @Volatile var preloadEnabled = true
     }
 
     private var player: YouTubePlayer? = null
@@ -262,6 +268,15 @@ class YouTubeSyncPlayer(
     private fun preload(videoId: String) {
         pendingVideo = null
         val p = player ?: return
+        if (!preloadEnabled) {
+            p.cueVideo(videoId, 0f)
+            prepared = true
+            onProgress = null
+            val ready = onCued
+            onCued = null
+            ready?.invoke()
+            return
+        }
         preloading = true
         preloadPlayingAt = 0L
         val token = ++preloadToken

@@ -118,6 +118,15 @@
         android:text="▶ ចាក់ YouTube បន្ត ពេលបិទអេក្រង់"
         android:textSize="14sp" />
 
+    <!-- Wait for 20% before playing YouTube (and preload the next song). -->
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/switchPreload"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="4dp"
+        android:text="⏳ ទាញយក 20% ទុកមុន ទើបចាក់"
+        android:textSize="14sp" />
+
     <!-- Mode selection -->
     <LinearLayout
         android:id="@+id/modePanel"
