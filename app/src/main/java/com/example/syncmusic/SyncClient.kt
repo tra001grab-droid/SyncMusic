@@ -41,6 +41,8 @@ class SyncClient(
         fun onSetMix(mix: String)
         /** 🤖 Auto delay: beep at these local times so the host's microphone can time this phone. */
         fun onBeep(localTimes: List<Long>)
+        /** The host turned its 20% preload switch on/off; do the same. */
+        fun onHostPreload(on: Boolean)
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -168,6 +170,7 @@ class SyncClient(
             "SKIP" -> listener.onSkip(p[1].toLong())
             "NEXT" -> listener.onNext(p[1])
             "SETMIX" -> listener.onSetMix(p[1])
+            "PRELOAD" -> listener.onHostPreload(p[1] == "1")
             "BEEP" -> listener.onBeep(p[1].split(",").mapNotNull { it.toLongOrNull()?.minus(offset) })
         }
     }

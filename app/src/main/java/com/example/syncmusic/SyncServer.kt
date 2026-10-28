@@ -24,6 +24,7 @@ import kotlin.concurrent.thread
  *                    SKIP <totalMs>   (only shows "⏩ +15s" on screen; the jump itself is a PLAY)
  *                    NEXT <videoId>   (preload 20% of the upcoming YouTube video in the background)
  *                    SETMIX <mix>     (host's mixer changed this phone's volume/EQ; see Mix.encode)
+ *                    PRELOAD <0|1>    (host's "► ធ្វើអោយភ្លេងរត់ត្រូវគ្នា" switch; clients follow it)
  *                    BEEP <t1,t2,...> (🤖 Auto delay: beep at these host times; the host's mic listens)
  */
 class SyncServer(
@@ -51,6 +52,7 @@ class SyncServer(
     /** Connected clients -> the upcoming video they have preloaded. */
     private val nextReady = ConcurrentHashMap<PrintWriter, String>()
     @Volatile private var nextMessage: String? = null
+    @Volatile private var preloadMessage: String? = null
 
     /** A connected phone as the mixer shows it. */
     class ClientInfo(val key: Int, address: String) {
@@ -122,6 +124,12 @@ class SyncServer(
         nextMessage?.let { broadcast(it) }
     }
 
+    /** The 20% preload switch: every client switches the same way (also those joining later). */
+    fun setPreload(on: Boolean) {
+        preloadMessage = "PRELOAD ${if (on) 1 else 0}"
+        broadcast(preloadMessage!!)
+    }
+
     fun nextReadyCount(videoId: String) = clients.keys.count { nextReady[it] == videoId }
 
     /** Loading percent of each client that isn't ready yet for version [v]. */
@@ -152,6 +160,7 @@ class SyncServer(
         synchronized(out) { out.println("HELLO $hostId ${hostName.replace('\n', ' ')}") }
         itemMessage?.let { synchronized(out) { out.println(it) } }
         nextMessage?.let { synchronized(out) { out.println(it) } }
+        preloadMessage?.let { synchronized(out) { out.println(it) } }
         try {
             socket.getInputStream().bufferedReader().forEachLine { line ->
                 val parts = line.split(" ")

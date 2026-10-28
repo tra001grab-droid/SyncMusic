@@ -202,6 +202,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             setOnCheckedChangeListener { _, checked ->
                 YouTubeSyncPlayer.preloadEnabled = checked
                 prefs.edit().putBoolean("preload_20", checked).apply()
+                server?.setPreload(checked)
                 // Off: also stop preloading the next song (saves internet).
                 if (!checked) {
                     if (server != null) resetNext() else ytSpare.stop()
@@ -772,6 +773,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 }
             }
             s.start()
+            s.setPreload(YouTubeSyncPlayer.preloadEnabled)
             server = s
             val info = NsdServiceInfo().apply {
                 serviceName = "SyncMusic"
@@ -1304,6 +1306,16 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (resume) hostPlay() else setStatus(hostStatus("បានផ្អាក"))
     }
 
+    override fun onHostPreload(on: Boolean) {
+        main.post {
+            // Follows the host while connected (the switch is locked until disconnecting).
+            findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchPreload).apply {
+                isChecked = on
+                isEnabled = false
+            }
+        }
+    }
+
     override fun onBeep(localTimes: List<Long>) {
         thread(isDaemon = true) { AutoDelay.beep(localTimes) }
     }
@@ -1359,6 +1371,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         main.post {
             client?.stop()
             client = null
+            findViewById<View>(R.id.switchPreload).isEnabled = true
             // The remembered address didn't work (new IP?): look for that same host on the Wi-Fi.
             val knownId = reconnectingHostId
             if (knownId != null) {
