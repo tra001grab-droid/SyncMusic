@@ -40,7 +40,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingBottom="4dp"
-        android:text="⏳ ទាញយក 20% ទុកមុន ទើបចាក់"
+        android:text="► ធ្វើអោយភ្លេងរត់ត្រូវគ្នា"
         android:textSize="14sp" />
 
     <!-- Mode selection -->

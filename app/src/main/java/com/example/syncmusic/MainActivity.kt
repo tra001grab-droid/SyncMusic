@@ -485,7 +485,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
     }
 
-    /** Results scrolled: up → header and player slide away; down → header comes back over the results. */
+    /** Results scrolled: up → header slides away and the player shrinks to the mini player; down → header comes back over the results. */
     private fun onResultsScroll(y: Int, dy: Int) {
         if (!searchPanel.isOpen || fullscreen) return
         if (y <= 0) {
@@ -503,7 +503,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             headerHidden = true
             searchHeader.animate().translationY(-searchHeader.height.toFloat()).setDuration(200).start()
             animateHeaderSpace(0)
-            setPlayerCollapsed(true)
+            // Like the YouTube app: keep watching in the corner while browsing (tap it to bring it back).
+            if (playerContainer.visibility == View.VISIBLE) setMini(true)
         } else if (dy < -8 && headerHidden) {
             lastScrollChangeAt = now()
             headerHidden = false
