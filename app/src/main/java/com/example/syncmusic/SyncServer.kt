@@ -24,6 +24,7 @@ import kotlin.concurrent.thread
  *                    SKIP <totalMs>   (only shows "⏩ +15s" on screen; the jump itself is a PLAY)
  *                    NEXT <videoId>   (preload 20% of the upcoming YouTube video in the background)
  *                    SETMIX <mix>     (host's mixer changed this phone's volume/EQ; see Mix.encode)
+ *                    BEEP <t1,t2,...> (🤖 Auto delay: beep at these host times; the host's mic listens)
  */
 class SyncServer(
     /** Permanent id of this host, so clients can recognize it next time. */

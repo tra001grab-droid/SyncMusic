@@ -2,6 +2,7 @@ package com.example.syncmusic
 
 import android.content.Context
 import android.Manifest
+import android.content.pm.PackageManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -50,6 +51,7 @@ import java.io.File
 import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** What the player area shows for the current item. */
 private enum class ItemKind { AUDIO, VIDEO, YOUTUBE }
@@ -134,6 +136,10 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) runAutoDelay() else mixerPanel.setAutoStatus("⚠ ត្រូវការ Microphone ដើម្បីវាស់ delay")
+    }
 
     private val voiceSearch = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val text = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
@@ -222,6 +228,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             getMix = ::mixerGet,
             setMix = ::mixerSet,
             tracks = ::mixerTracks,
+            autoDelayOn = { prefs.getBoolean("auto_delay", false) },
+            onAutoDelay = { on ->
+                prefs.edit().putBoolean("auto_delay", on).apply()
+                if (on) runAutoDelay()
+            },
+            onMeasure = ::runAutoDelay,
             note = {
                 val eq = when {
                     !mixer.eqAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត EQ ទេ — Volume នៅតែដំណើរការ"
@@ -753,7 +765,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         startBackgroundService()
         thread {
             val s = SyncServer(hostId(), Build.MODEL) { event -> setStatus(hostStatus(event)) }
-            s.onClientsChanged = { main.post { mixerPanel.refresh() } }
+            s.onClientsChanged = {
+                main.post {
+                    mixerPanel.refresh()
+                    autoMeasureNewPhones()
+                }
+            }
             s.start()
             server = s
             val info = NsdServiceInfo().apply {
@@ -1202,6 +1219,93 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             reportMix()
             mixerPanel.refresh()
         }
+    }
+
+    // ------------------------------------------------------------ 🤖 auto delay
+
+    private var measuringDelay = false
+    /** Phones already measured; with 🤖 Auto on, a phone that joins later is measured once too. */
+    private val measuredKeys = mutableSetOf<Int>()
+    private val autoMeasure = Runnable { runAutoDelay() }
+
+    private fun autoMeasureNewPhones() {
+        val s = server ?: return
+        if (!prefs.getBoolean("auto_delay", false) || measuringDelay) return
+        // Wait for its MIX (it knows its own delay) and let it settle in before beeping.
+        if (s.clientList().any { it.mix != null && it.key !in measuredKeys }) {
+            main.removeCallbacks(autoMeasure)
+            main.postDelayed(autoMeasure, 4000)
+        }
+    }
+
+    /**
+     * Host: pause, let every phone beep in turn (host first) at set times while this phone's
+     * microphone listens, then set each phone's ⏱ Delay from how much later than the host it
+     * was heard, and play on.
+     */
+    private fun runAutoDelay() {
+        val s = server ?: return
+        if (measuringDelay) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val phones = s.clientList().filter { it.mix != null }
+        if (phones.isEmpty()) {
+            mixerPanel.setAutoStatus("គ្មានទូរស័ព្ទកូនភ្ជាប់ទេ")
+            return
+        }
+        main.removeCallbacks(autoMeasure)
+        measuringDelay = true
+        val wasPlaying = active?.isPlaying == true
+        if (wasPlaying) hostPause()
+        mixerPanel.setAutoStatus("🤖 កំពុងវាស់… សូមស្ងាត់មួយភ្លែត (ស្ដាប់ឮ ប៊ីប)")
+        setStatus(hostStatus("🤖 កំពុងវាស់ delay…"))
+        val count = phones.size + 1
+        val start = now() + 1500
+        fun at(round: Int, phone: Int) = start + (round * count + phone) * AutoDelay.GAP_MS
+        fun timesOf(phone: Int) = (0 until AutoDelay.ROUNDS).map { at(it, phone) }
+        phones.forEachIndexed { i, c -> s.sendTo(c.key, "BEEP " + timesOf(i + 1).joinToString(",")) }
+        thread(isDaemon = true) { AutoDelay.beep(timesOf(0)) }
+        thread(isDaemon = true) {
+            val rec = AutoDelay.record(at(AutoDelay.ROUNDS - 1, count - 1) + AutoDelay.GAP_MS + 200)
+            // Median of the rounds for each phone (null = never heard).
+            val lags = (0 until count).map { j ->
+                rec?.let { r -> timesOf(j).mapNotNull { AutoDelay.lag(r, it) }.sorted() }
+                    ?.let { if (it.isEmpty()) null else it[it.size / 2] }
+            }
+            main.post { finishAutoDelay(phones, lags, rec != null, wasPlaying) }
+        }
+    }
+
+    private fun finishAutoDelay(phones: List<SyncServer.ClientInfo>, lags: List<Double?>, micOk: Boolean, resume: Boolean) {
+        measuringDelay = false
+        measuredKeys += phones.map { it.key }
+        val hostLag = lags[0]
+        val text = when {
+            !micOk -> "⚠ មិនអាចប្រើ Microphone បានទេ"
+            hostLag == null -> "⚠ មិនឮសំឡេងទូរស័ព្ទមេ — បើក Volume ហើយចុច 🔄"
+            else -> "✔ បានកំណត់ Delay ស្វ័យប្រវត្តិ:\n" + phones.mapIndexed { i, c ->
+                val lag = lags[i + 1]
+                val mix = Mix.decode(c.mix)
+                if (lag == null || mix == null) {
+                    "📱 ${c.name}: ✖ មិនឮ (Volume ទាប ឬ iPhone)"
+                } else {
+                    // Heard later than the host = its sound comes out late = it should play ahead.
+                    val delay = (mixer.delayMs + ((lag - hostLag) / 10).roundToInt() * 10)
+                        .coerceIn(Mix.MIN_DELAY_MS, Mix.MAX_DELAY_MS)
+                    setClientMix(c, mix.copy(delayMs = delay))
+                    "📱 ${c.name}: ⏱ ${if (delay > 0) "+" else ""}$delay ms"
+                }
+            }.joinToString("\n")
+        }
+        mixerPanel.setAutoStatus(text)
+        mixerPanel.refresh()
+        if (resume) hostPlay() else setStatus(hostStatus("បានផ្អាក"))
+    }
+
+    override fun onBeep(localTimes: List<Long>) {
+        thread(isDaemon = true) { AutoDelay.beep(localTimes) }
     }
 
     // ------------------------------------------------------- remembered devices

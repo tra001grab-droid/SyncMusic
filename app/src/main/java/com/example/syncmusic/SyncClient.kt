@@ -39,6 +39,8 @@ class SyncClient(
         fun onNext(videoId: String)
         /** The host's mixer set this phone's volume/EQ (see Mix.decode). */
         fun onSetMix(mix: String)
+        /** 🤖 Auto delay: beep at these local times so the host's microphone can time this phone. */
+        fun onBeep(localTimes: List<Long>)
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -166,6 +168,7 @@ class SyncClient(
             "SKIP" -> listener.onSkip(p[1].toLong())
             "NEXT" -> listener.onNext(p[1])
             "SETMIX" -> listener.onSetMix(p[1])
+            "BEEP" -> listener.onBeep(p[1].split(",").mapNotNull { it.toLongOrNull()?.minus(offset) })
         }
     }
 

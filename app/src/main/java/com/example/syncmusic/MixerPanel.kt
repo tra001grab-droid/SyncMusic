@@ -27,6 +27,10 @@ class MixerPanel(
     private val note: () -> String,
     /** Host only: every phone's track (empty on a client, which hides the section). */
     private val tracks: () -> List<Track> = { emptyList() },
+    /** 🤖 Auto delay switch: current state, and what to do when it's flipped / 🔄 is pressed. */
+    private val autoDelayOn: () -> Boolean = { false },
+    private val onAutoDelay: (on: Boolean) -> Unit = {},
+    private val onMeasure: () -> Unit = {},
 ) {
     /** One phone in the track view. [gapMs]: + = ahead of the host, null = no reading yet. */
     data class Track(
@@ -57,6 +61,8 @@ class MixerPanel(
     private val boostLock: Button = root.findViewById(R.id.mixerBoostLock)
     private val delay: SeekBar = root.findViewById(R.id.mixerDelay)
     private val delayLabel: TextView = root.findViewById(R.id.mixerDelayLabel)
+    private val autoSwitch: androidx.appcompat.widget.SwitchCompat = root.findViewById(R.id.mixerAutoDelay)
+    private val autoStatus: TextView = root.findViewById(R.id.mixerAutoStatus)
     private val bandSliders = mutableListOf<SeekBar>()
     private val bandValues = mutableListOf<TextView>()
 
@@ -71,6 +77,13 @@ class MixerPanel(
 
     init {
         root.findViewById<Button>(R.id.mixerClose).setOnClickListener { hide() }
+        autoSwitch.isChecked = autoDelayOn()
+        autoSwitch.setOnCheckedChangeListener { _, on ->
+            showAutoRow()
+            onAutoDelay(on)
+        }
+        root.findViewById<Button>(R.id.mixerAutoRun).setOnClickListener { onMeasure() }
+        showAutoRow()
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
         mute.setOnClickListener { change(mix.copy(muted = !mix.muted)) }
         // Slider steps of 10 ms from -500 to +500; the buttons fine-tune by 10 ms.
@@ -177,6 +190,15 @@ class MixerPanel(
         val rtt = track.rttMs?.let { " · RTT $it ms" } ?: ""
         val delay = if (track.delayMs != 0) " · ⏱ ${if (track.delayMs > 0) "+" else ""}${track.delayMs} ms" else ""
         (row.getChildAt(2) as TextView).text = gapText + rtt + delay
+    }
+
+    private fun showAutoRow() {
+        root.findViewById<View>(R.id.mixerAutoRow).visibility = if (autoSwitch.isChecked) View.VISIBLE else View.GONE
+    }
+
+    /** Progress/result of the 🤖 Auto delay measurement. */
+    fun setAutoStatus(text: String) {
+        autoStatus.text = text
     }
 
     fun hide() {
