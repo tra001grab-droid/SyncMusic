@@ -38,6 +38,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ListView
 import android.widget.SeekBar
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -115,7 +116,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
     private val hideSkip = Runnable { findViewById<View>(R.id.skipOverlay).visibility = View.GONE }
     private var inForeground = false
-    private var backgroundYouTube = true
+    private var backgroundYouTube = false
 
     // Client state (main thread only)
     private var clientVersion = 0
@@ -184,7 +185,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         ytSpare = makeYouTubePlayer(findViewById(R.id.youtubeView2))
         setUpPlayerUi()
 
-        backgroundYouTube = prefs.getBoolean("yt_background", true)
+        // Off unless turned on (YouTube's terms don't allow playing on with the screen off). New key
+        // so it starts off after updating too.
+        backgroundYouTube = prefs.getBoolean("yt_background_v2", false)
         ytPlayer.view.enableBackgroundPlayback(backgroundYouTube)
         ytSpare.view.enableBackgroundPlayback(backgroundYouTube)
         findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchBackground).apply {
@@ -193,7 +196,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 backgroundYouTube = checked
                 ytPlayer.view.enableBackgroundPlayback(checked)
                 ytSpare.view.enableBackgroundPlayback(checked)
-                prefs.edit().putBoolean("yt_background", checked).apply()
+                prefs.edit().putBoolean("yt_background_v2", checked).apply()
             }
         }
         YouTubeSyncPlayer.preloadEnabled = prefs.getBoolean("preload_20", true)
@@ -250,6 +253,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             },
         )
         findViewById<Button>(R.id.btnMixer).setOnClickListener { mixerPanel.show() }
+        findViewById<View>(R.id.headerLogo).setOnClickListener { showAbout() }
+        findViewById<View>(R.id.headerTitle).setOnClickListener { showAbout() }
         findViewById<Button>(R.id.btnMixerClient).setOnClickListener { mixerPanel.show() }
         // Volume keys change the media volume: keep the mixer (and the host's view of us) current.
         contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volumeObserver)
@@ -1320,6 +1325,68 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         thread(isDaemon = true) { AutoDelay.beep(localTimes) }
     }
 
+    // ------------------------------------------------------------------ about
+
+    /** ℹ Copyright, ownership notices, the open-source licenses and privacy. */
+    private fun showAbout() {
+        val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
+        val text = """
+            |Sync Music  v$version
+            |© 2026 Chetra Phon. រក្សាសិទ្ធិគ្រប់យ៉ាង (All rights reserved).
+            |ទំនាក់ទំនង: chetraphon@gmail.com
+            |
+            |កម្មវិធីនេះផ្ដល់ជូនដោយឥតគិតថ្លៃ "តាមស្ថានភាពដែលមាន" (as is) ដោយគ្មានការធានា។
+            |
+            |▶ YouTube
+            |កម្មវិធីនេះមិនមែនជារបស់ YouTube ឬ Google ទេ ហើយមិនមានទំនាក់ទំនងជាមួយពួកគេទេ។ YouTube ជាពាណិជ្ជសញ្ញារបស់ Google LLC។ វីដេអូ YouTube ត្រូវបានចាក់តាម YouTube player ផ្លូវការ (IFrame) ហើយស្ថិតក្រោមលក្ខខណ្ឌរបស់ YouTube: https://www.youtube.com/t/terms
+            |
+            |🎵 បទចម្រៀង
+            |បទចម្រៀង និងវីដេអូទាំងអស់ ជាកម្មសិទ្ធិរបស់ម្ចាស់ដើម។ កម្មវិធីនេះមិនលក់ ឬចែកចាយមាតិកាណាមួយទេ។ សូមចាក់តែបទដែលអ្នកមានសិទ្ធិប្រើប៉ុណ្ណោះ។
+            |
+            |🔒 ឯកជនភាព
+            |• Microphone ប្រើតែពេលវាស់ 🤖 Auto Delay ប៉ុណ្ណោះ — មិនរក្សាទុក មិនផ្ញើទៅណាទេ។
+            |• ទូរស័ព្ទនិយាយគ្នាតែក្នុង Wi-Fi តែមួយប៉ុណ្ណោះ។
+            |• កម្មវិធីមិនប្រមូលទិន្នន័យផ្ទាល់ខ្លួនទេ។
+            |
+            |📦 Open-source (Apache License 2.0)
+            |• AndroidX (AppCompat) — © The Android Open Source Project
+            |• Media3 / ExoPlayer — © The Android Open Source Project
+            |• android-youtube-player — © Pierfrancesco Soffritti
+            |• Kotlin — © JetBrains s.r.o.
+        """.trimMargin()
+        val body = TextView(this).apply {
+            this.text = text
+            textSize = 14f
+            setTextIsSelectable(true)
+            android.text.util.Linkify.addLinks(this, android.text.util.Linkify.WEB_URLS or android.text.util.Linkify.EMAIL_ADDRESSES)
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("ℹ អំពី / កម្មសិទ្ធិបញ្ញា")
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("បិទ", null)
+            .setNeutralButton("📄 Apache License 2.0") { _, _ -> showLicense() }
+            .show()
+    }
+
+    private fun showLicense() {
+        val license = runCatching { assets.open("apache-2.0.txt").bufferedReader().readText() }.getOrDefault("")
+        val body = TextView(this).apply {
+            text = license
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            val pad = (12 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, 0)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Apache License 2.0")
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("បិទ", null)
+            .show()
+    }
+
     // ------------------------------------------------------- remembered devices
 
     private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
@@ -1588,21 +1655,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     // ------------------------------------------------------- next-song preload
 
-    /** The WebView's own User-Agent (read on the main thread; used off it by YouTubeChrome). */
-    private val webViewUserAgent: String by lazy { android.webkit.WebSettings.getDefaultUserAgent(this) }
-    private var chromeResultShown = false
-
     private fun makeYouTubePlayer(view: YouTubePlayerView): YouTubeSyncPlayer {
-        webViewUserAgent  // resolve now, on the main thread
-        // Say once whether hiding YouTube's own buttons worked, so a failure isn't silent.
-        YouTubeChrome.onResult = { message ->
-            main.post {
-                if (!chromeResultShown) {
-                    chromeResultShown = true
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                }
-            }
-        }
         lateinit var p: YouTubeSyncPlayer
         // Only the player on screen may drive the app; the spare one just preloads.
         p = YouTubeSyncPlayer(
@@ -1617,10 +1670,6 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 main.post { rebuildYouTubePlayer(p) }
                 return true
             }
-
-            // YouTube's own buttons would sit on top of the app's controls: hide them.
-            override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest) =
-                YouTubeChrome.intercept(request, webViewUserAgent)
         }
         return p
     }

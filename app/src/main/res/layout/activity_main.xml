@@ -458,17 +458,20 @@
             android:orientation="horizontal"
             android:paddingHorizontal="12dp">
 
+            <!-- Tap the logo or the name: ℹ about / copyright. -->
             <TextView
+                android:id="@+id/headerLogo"
                 android:layout_width="34dp"
                 android:layout_height="34dp"
                 android:background="@drawable/logo_circle"
                 android:gravity="center"
-                android:paddingStart="3dp"
-                android:text="▶"
+                android:text="♫"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp" />
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/headerTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
