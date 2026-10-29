@@ -106,6 +106,56 @@
                         android:textAllCaps="false" />
                 </LinearLayout>
 
+                <!-- Options of the microphone measurement (shown with 🤖 Auto). -->
+                <LinearLayout
+                    android:id="@+id/mixerAutoOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <CheckBox
+                        android:id="@+id/mixerSilent"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="🔇 ប៊ិបស្ងាត់ (19 kHz)"
+                        android:textColor="#FFFFFF"
+                        android:textSize="13sp" />
+
+                    <Button
+                        android:id="@+id/mixerListener"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textAllCaps="false"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <!-- 🎧 By ear: for earphones / broken microphones. Every phone beeps together. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/mixerEarStatus"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="ពាក់កាស ឬ Microphone ខូច? វាស់ដោយត្រចៀក →"
+                        android:textColor="#AAAAAA"
+                        android:textSize="13sp" />
+
+                    <Button
+                        android:id="@+id/mixerEar"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🎧 វាស់ដោយត្រចៀក"
+                        android:textAllCaps="false" />
+                </LinearLayout>
+
                 <LinearLayout
                     android:id="@+id/mixerTracks"
                     android:layout_width="match_parent"

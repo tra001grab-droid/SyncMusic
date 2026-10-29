@@ -40,7 +40,14 @@ class SyncClient(
         /** The host's mixer set this phone's volume/EQ (see Mix.decode). */
         fun onSetMix(mix: String)
         /** 🤖 Auto delay: beep at these local times so the host's microphone can time this phone. */
-        fun onBeep(localTimes: List<Long>)
+        fun onBeep(localTimes: List<Long>, hz: Double)
+        /** 🎧 By-ear mode: beep every [periodMs] from [localStart] at [hz]; null = stop. */
+        fun onTicks(localStart: Long?, periodMs: Long, hz: Double)
+        /**
+         * Use this phone's microphone for the auto delay: record until [localUntil], find the beeps
+         * of each phone ([localTimes], one list per phone) and answer with [sendLags].
+         */
+        fun onListen(localUntil: Long, hz: Double, localTimes: List<List<Long>>)
         /** The host turned its 20% preload switch on/off; do the same. */
         fun onHostPreload(on: Boolean)
         /** Connection failed or was lost (not called after [stop]). */
@@ -123,6 +130,10 @@ class SyncClient(
     fun sendMix(mix: Mix) = send("MIX ${mix.encode()}")
 
     /** Our current gap to the host (+ = ahead) and round-trip time, for the host's track view. */
+    /** Answer to LISTEN: per phone, the lag of each beep ("x" = not heard); or "nomic". */
+    fun sendLags(lags: List<List<Double?>>?) =
+        send("LAGS " + (lags?.joinToString(";") { phone -> phone.joinToString(",") { it?.let { "%.1f".format(java.util.Locale.US, it) } ?: "x" } } ?: "nomic"))
+
     fun sendStat(gapMs: Long, rttMs: Long) = send("STAT $gapMs $rttMs")
 
     private fun startPinging() = thread(name = "sync-ping", isDaemon = true) {
@@ -171,7 +182,19 @@ class SyncClient(
             "NEXT" -> listener.onNext(p[1])
             "SETMIX" -> listener.onSetMix(p[1])
             "PRELOAD" -> listener.onHostPreload(p[1] == "1")
-            "BEEP" -> listener.onBeep(p[1].split(",").mapNotNull { it.toLongOrNull()?.minus(offset) })
+            "BEEP" -> listener.onBeep(
+                p[1].split(",").mapNotNull { it.toLongOrNull()?.minus(offset) },
+                p.getOrNull(2)?.toDoubleOrNull() ?: AutoDelay.AUDIBLE_HZ,
+            )
+            "TICKS" -> {
+                val start = p[1].toLong()
+                listener.onTicks(if (start == 0L) null else start - offset,
+                    p.getOrNull(2)?.toLongOrNull() ?: 1000L, p.getOrNull(3)?.toDoubleOrNull() ?: AutoDelay.AUDIBLE_HZ)
+            }
+            "LISTEN" -> listener.onListen(
+                p[1].toLong() - offset, p[2].toDouble(),
+                p[3].split(";").map { phone -> phone.split(",").mapNotNull { it.toLongOrNull()?.minus(offset) } },
+            )
         }
     }
 

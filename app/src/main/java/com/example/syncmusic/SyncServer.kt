@@ -25,7 +25,11 @@ import kotlin.concurrent.thread
  *                    NEXT <videoId>   (preload 20% of the upcoming YouTube video in the background)
  *                    SETMIX <mix>     (host's mixer changed this phone's volume/EQ; see Mix.encode)
  *                    PRELOAD <0|1>    (host's "► ធ្វើអោយភ្លេងរត់ត្រូវគ្នា" switch; clients follow it)
- *                    BEEP <t1,t2,...> (🤖 Auto delay: beep at these host times; the host's mic listens)
+ *                    BEEP <t1,t2,...> [hz]  (🤖 Auto delay: beep at these host times)
+ *                    LISTEN <until> <hz> <t,t;t,t;...>  (🤖 Auto delay with this phone's mic: the
+ *                                     beep times of every phone; answered with LAGS)
+ *                    TICKS <start> <periodMs> <hz> | TICKS 0  (🎧 by ear: beep every period / stop)
+ *   client -> host : LAGS <lag,lag;lag,lag;...> | LAGS nomic   ("x" = beep not heard)
  */
 class SyncServer(
     /** Permanent id of this host, so clients can recognize it next time. */
@@ -69,6 +73,8 @@ class SyncServer(
     private val nextKey = java.util.concurrent.atomic.AtomicInteger(1)
     /** Called (on a network thread) when a phone connects, disconnects or reports its mix. */
     @Volatile var onClientsChanged: (() -> Unit)? = null
+    /** A client's answer to LISTEN (its key, the LAGS text). */
+    @Volatile var onLags: ((Int, String) -> Unit)? = null
 
     fun clientList(): List<ClientInfo> = info.values.sortedBy { it.key }
 
@@ -177,6 +183,7 @@ class SyncServer(
                         info[out]?.mix = parts.getOrNull(1)
                         onClientsChanged?.invoke()
                     }
+                    "LAGS" -> info[out]?.let { c -> onLags?.invoke(c.key, parts.getOrElse(1) { "" }) }
                     "STAT" -> info[out]?.let { c ->
                         c.gapMs = parts.getOrNull(1)?.toLongOrNull()
                         c.rttMs = parts.getOrNull(2)?.toLongOrNull()

@@ -31,6 +31,15 @@ class MixerPanel(
     private val autoDelayOn: () -> Boolean = { false },
     private val onAutoDelay: (on: Boolean) -> Unit = {},
     private val onMeasure: () -> Unit = {},
+    /** 🔇 silent (19 kHz) beeps for the microphone measurement. */
+    private val silentOn: () -> Boolean = { false },
+    private val onSilent: (on: Boolean) -> Unit = {},
+    /** Name of the phone whose microphone listens; tapping the button picks another. */
+    private val listenerName: () -> String = { "" },
+    private val onPickListener: () -> Unit = {},
+    /** 🎧 By-ear mode on/off. */
+    private val onEar: () -> Unit = {},
+    private val onHide: () -> Unit = {},
 ) {
     /** One phone in the track view. [gapMs]: + = ahead of the host, null = no reading yet. */
     data class Track(
@@ -93,6 +102,12 @@ class MixerPanel(
             onAutoDelay(on)
         }
         root.findViewById<Button>(R.id.mixerAutoRun).setOnClickListener { onMeasure() }
+        root.findViewById<android.widget.CheckBox>(R.id.mixerSilent).apply {
+            isChecked = silentOn()
+            setOnCheckedChangeListener { _, on -> onSilent(on) }
+        }
+        root.findViewById<Button>(R.id.mixerListener).setOnClickListener { onPickListener() }
+        root.findViewById<Button>(R.id.mixerEar).setOnClickListener { onEar() }
         showAutoRow()
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
         mute.setOnClickListener { change(mix.copy(muted = !mix.muted)) }
@@ -161,6 +176,7 @@ class MixerPanel(
         expanded = null
         trackLayout = ""
         root.visibility = View.VISIBLE
+        updateListener()
         renderTracks()
         refresh(force = true)
         root.removeCallbacks(trackTicker)
@@ -255,7 +271,23 @@ class MixerPanel(
     }
 
     private fun showAutoRow() {
-        root.findViewById<View>(R.id.mixerAutoRow).visibility = if (autoSwitch.isChecked) View.VISIBLE else View.GONE
+        val visibility = if (autoSwitch.isChecked) View.VISIBLE else View.GONE
+        root.findViewById<View>(R.id.mixerAutoRow).visibility = visibility
+        root.findViewById<View>(R.id.mixerAutoOptions).visibility = visibility
+        updateListener()
+    }
+
+    fun updateListener() {
+        root.findViewById<Button>(R.id.mixerListener).text = "🎙 ស្តាប់ដោយ: ${listenerName()} ▾"
+    }
+
+    /** 🎧 By-ear mode's instructions/progress; [running] turns the button into ⏹. */
+    fun setEarStatus(text: String, running: Boolean) {
+        root.findViewById<TextView>(R.id.mixerEarStatus).apply {
+            this.text = text
+            setTextColor(if (running) 0xFFFFD54F.toInt() else Color.LTGRAY)
+        }
+        root.findViewById<Button>(R.id.mixerEar).text = if (running) "⏹ ឈប់" else "🎧 វាស់ដោយត្រចៀក"
     }
 
     /** Progress/result of the 🤖 Auto delay measurement. */
@@ -265,6 +297,7 @@ class MixerPanel(
 
     fun hide() {
         root.visibility = View.GONE
+        onHide()
     }
 
     /** Re-read devices and the selected phone's settings (e.g. a client reported a change). */

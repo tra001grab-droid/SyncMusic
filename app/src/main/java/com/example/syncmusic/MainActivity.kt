@@ -63,6 +63,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val SERVICE_TYPE = "_syncmusic._tcp."
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
         private const val POS_INTERVAL_MS = 1000L
+        private const val EAR_PERIOD_MS = 1000L        // 🎧 by ear: one beep a second
+        private const val EAR_MAX_MS = 180_000L        // 🎧 beeps stop by themselves after 3 minutes
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
         private const val YOUTUBE_NUDGE_MS = 60L       // YouTube gap above this -> 1.25x/0.75x catch-up
         private const val SKIP_SETTLE_MS = 1000L       // wait this long after the last skip (double) tap
@@ -238,6 +240,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 if (on) runAutoDelay()
             },
             onMeasure = ::runAutoDelay,
+            silentOn = { prefs.getBoolean("auto_silent", false) },
+            onSilent = { on -> prefs.edit().putBoolean("auto_silent", on).apply() },
+            listenerName = ::listenerName,
+            onPickListener = ::pickListener,
+            onEar = ::toggleEarMode,
+            onHide = ::stopEarMode,
             note = {
                 val eq = when {
                     !mixer.eqAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត EQ ទេ — Volume នៅតែដំណើរការ"
@@ -771,6 +779,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         startBackgroundService()
         thread {
             val s = SyncServer(hostId(), Build.MODEL) { event -> setStatus(hostStatus(event)) }
+            s.onLags = ::onLags
             s.onClientsChanged = {
                 main.post {
                     mixerPanel.refresh()
@@ -1234,10 +1243,35 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     /** Phones already measured; with 🤖 Auto on, a phone that joins later is measured once too. */
     private val measuredKeys = mutableSetOf<Int>()
     private val autoMeasure = Runnable { runAutoDelay() }
+    /** Whose microphone listens: MixerPanel.SELF (this host) or a client's "c<key>". */
+    private var delayListener = MixerPanel.SELF
+    /** Waiting for a client's LAGS; null when not. */
+    private var pendingLags: ((String?) -> Unit)? = null
+    private val beepHz get() = if (prefs.getBoolean("auto_silent", false)) AutoDelay.SILENT_HZ else AutoDelay.AUDIBLE_HZ
+
+    private fun listenerClient() = clientOf(delayListener)?.takeIf { it.mix != null }
+
+    private fun listenerName() = listenerClient()?.name ?: "${Build.MODEL} (Host)"
+
+    /** 🎙 Pick the phone whose microphone listens (e.g. the host's is broken). */
+    private fun pickListener() {
+        val phones = server?.clientList()?.filter { it.mix != null }.orEmpty()
+        val ids = listOf(MixerPanel.SELF) + phones.map { "c${it.key}" }
+        val names = listOf("👑 ${Build.MODEL} (Host)") + phones.map { "📱 ${it.name}" }
+        AlertDialog.Builder(this)
+            .setTitle("🎙 ប្រើ Microphone ទូរស័ព្ទណា?")
+            .setSingleChoiceItems(names.toTypedArray(), ids.indexOf(delayListener).coerceAtLeast(0)) { dialog, which ->
+                delayListener = ids[which]
+                mixerPanel.updateListener()
+                dialog.dismiss()
+            }
+            .setNegativeButton("បោះបង់", null)
+            .show()
+    }
 
     private fun autoMeasureNewPhones() {
         val s = server ?: return
-        if (!prefs.getBoolean("auto_delay", false) || measuringDelay) return
+        if (!prefs.getBoolean("auto_delay", false) || measuringDelay || earMode) return
         // Wait for its MIX (it knows its own delay) and let it settle in before beeping.
         if (s.clientList().any { it.mix != null && it.key !in measuredKeys }) {
             main.removeCallbacks(autoMeasure)
@@ -1246,14 +1280,15 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
 
     /**
-     * Host: pause, let every phone beep in turn (host first) at set times while this phone's
-     * microphone listens, then set each phone's ⏱ Delay from how much later than the host it
-     * was heard, and play on.
+     * Host: pause, let every phone beep in turn (host first) at set times while one phone's
+     * microphone listens (this one, or the one picked with 🎙), then set each phone's ⏱ Delay
+     * from how much later than the host it was heard, and play on.
      */
     private fun runAutoDelay() {
         val s = server ?: return
-        if (measuringDelay) return
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (measuringDelay || earMode) return
+        val listener = listenerClient()
+        if (listener == null && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -1266,37 +1301,67 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         measuringDelay = true
         val wasPlaying = active?.isPlaying == true
         if (wasPlaying) hostPause()
-        mixerPanel.setAutoStatus("🤖 កំពុងវាស់… សូមស្ងាត់មួយភ្លែត (ស្ដាប់ឮ ប៊ីប)")
+        val hz = beepHz
+        mixerPanel.setAutoStatus(
+            "🤖 កំពុងវាស់ (🎙 ${listener?.name ?: "Host"})… " +
+                if (hz == AutoDelay.SILENT_HZ) "ប៊ិបស្ងាត់ 19 kHz" else "សូមស្ងាត់មួយភ្លែត (ស្ដាប់ឮ ប៊ីប)"
+        )
         setStatus(hostStatus("🤖 កំពុងវាស់ delay…"))
         val count = phones.size + 1
         val start = now() + 1500
         fun at(round: Int, phone: Int) = start + (round * count + phone) * AutoDelay.GAP_MS
-        fun timesOf(phone: Int) = (0 until AutoDelay.ROUNDS).map { at(it, phone) }
-        phones.forEachIndexed { i, c -> s.sendTo(c.key, "BEEP " + timesOf(i + 1).joinToString(",")) }
-        thread(isDaemon = true) { AutoDelay.beep(timesOf(0)) }
-        thread(isDaemon = true) {
-            val rec = AutoDelay.record(at(AutoDelay.ROUNDS - 1, count - 1) + AutoDelay.GAP_MS + 200)
-            // Median of the rounds for each phone (null = never heard).
-            val lags = (0 until count).map { j ->
-                rec?.let { r -> timesOf(j).mapNotNull { AutoDelay.lag(r, it) }.sorted() }
-                    ?.let { if (it.isEmpty()) null else it[it.size / 2] }
+        val times = (0 until count).map { j -> (0 until AutoDelay.ROUNDS).map { at(it, j) } }
+        val until = at(AutoDelay.ROUNDS - 1, count - 1) + AutoDelay.GAP_MS + 200
+        // Every phone beeps the same way, whoever listens.
+        phones.forEachIndexed { i, c -> s.sendTo(c.key, "BEEP ${times[i + 1].joinToString(",")} $hz") }
+        thread(isDaemon = true) { AutoDelay.beep(times[0], hz) }
+
+        // The lags of every beep, per phone (null = this microphone couldn't record).
+        fun done(lags: List<List<Double?>>?, error: String?) {
+            pendingLags = null
+            main.removeCallbacks(lagsTimeout)
+            val medians = lags?.map { phone -> phone.filterNotNull().sorted().let { if (it.isEmpty()) null else it[it.size / 2] } }
+            finishAutoDelay(phones, medians, error, wasPlaying)
+        }
+        if (listener == null) {
+            thread(isDaemon = true) {
+                val rec = AutoDelay.record(until)
+                val lags = rec?.let { r -> times.map { phone -> phone.map { AutoDelay.lag(r, it, hz) } } }
+                main.post { done(lags, if (rec == null) "⚠ មិនអាចប្រើ Microphone បានទេ — សាក 🎙 ទូរស័ព្ទផ្សេង" else null) }
             }
-            main.post { finishAutoDelay(phones, lags, rec != null, wasPlaying) }
+        } else {
+            s.sendTo(listener.key, "LISTEN $until $hz ${times.joinToString(";") { it.joinToString(",") }}")
+            pendingLags = { text ->
+                when {
+                    text == null -> done(null, "⚠ ${listener.name} មិនឆ្លើយ — សូម update app លើទូរស័ព្ទនោះ")
+                    text == "nomic" -> done(null, "⚠ ${listener.name}: សូមអនុញ្ញាត Microphone លើទូរស័ព្ទនោះ រួចចុច 🔄")
+                    else -> done(text.split(";").map { phone -> phone.split(",").map { it.toDoubleOrNull() } }, null)
+                }
+            }
+            main.postDelayed(lagsTimeout, until - now() + 5000)
         }
     }
 
-    private fun finishAutoDelay(phones: List<SyncServer.ClientInfo>, lags: List<Double?>, micOk: Boolean, resume: Boolean) {
+    private val lagsTimeout = Runnable { pendingLags?.invoke(null) }
+
+    /** A client answered LISTEN. */
+    private fun onLags(key: Int, text: String) = main.post {
+        if (listenerClient()?.key == key) pendingLags?.invoke(text)
+    }
+
+    private fun finishAutoDelay(phones: List<SyncServer.ClientInfo>, lags: List<Double?>?, error: String?, resume: Boolean) {
         measuringDelay = false
         measuredKeys += phones.map { it.key }
-        val hostLag = lags[0]
+        val hostLag = lags?.getOrNull(0)
         val text = when {
-            !micOk -> "⚠ មិនអាចប្រើ Microphone បានទេ"
-            hostLag == null -> "⚠ មិនឮសំឡេងទូរស័ព្ទមេ — បើក Volume ហើយចុច 🔄"
+            error != null || lags == null -> error ?: "⚠"
+            hostLag == null -> "⚠ មិនឮសំឡេងទូរស័ព្ទមេ — បើក Volume / ដាក់ទូរស័ព្ទជិតគ្នា ហើយចុច 🔄" +
+                if (beepHz == AutoDelay.SILENT_HZ) "\n(ឬបិទ 🔇 ប៊ិបស្ងាត់ — ឧបាល័រខ្លះមិនអាចចេញ 19 kHz)" else ""
             else -> "✔ បានកំណត់ Delay ស្វ័យប្រវត្តិ:\n" + phones.mapIndexed { i, c ->
-                val lag = lags[i + 1]
+                val lag = lags.getOrNull(i + 1)
                 val mix = Mix.decode(c.mix)
                 if (lag == null || mix == null) {
-                    "📱 ${c.name}: ✖ មិនឮ (Volume ទាប ឬ iPhone)"
+                    "📱 ${c.name}: ✖ មិនឮ (Volume ទាប/កាស/iPhone) — ប្រើ 🎧"
                 } else {
                     // Heard later than the host = its sound comes out late = it should play ahead.
                     val delay = (mixer.delayMs + ((lag - hostLag) / 10).roundToInt() * 10)
@@ -1311,6 +1376,52 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (resume) hostPlay() else setStatus(hostStatus("បានផ្អាក"))
     }
 
+    // -------------------------------------------------------------- 🎧 by ear
+
+    /** Host: every phone beeps together once a second until stopped; the ⏱ Delays are set by ear. */
+    private var earMode = false
+    private var earResume = false
+    private var earStopAt = 0L
+    private val earAutoStop = Runnable { stopEarMode() }
+
+    private fun earPitch(index: Int) = 880.0 + 440.0 * index
+
+    private fun toggleEarMode() = if (earMode) stopEarMode() else startEarMode()
+
+    private fun startEarMode() {
+        val s = server ?: return
+        if (measuringDelay) return
+        val phones = s.clientList().filter { it.mix != null }
+        earMode = true
+        earResume = active?.isPlaying == true
+        if (earResume) hostPause()
+        val start = now() + 1000
+        // At most 3 minutes, so beeps can't be left on by mistake.
+        earStopAt = start + EAR_MAX_MS
+        main.postDelayed(earAutoStop, EAR_MAX_MS + 1000)
+        phones.forEachIndexed { i, c -> s.sendTo(c.key, "TICKS $start $EAR_PERIOD_MS ${earPitch(i + 1)}") }
+        thread(isDaemon = true) {
+            AutoDelay.ticks(start, EAR_PERIOD_MS, earPitch(0), { mixer.delayMs }) { earMode && now() < earStopAt }
+        }
+        val who = (listOf("👑 Host") + phones.map { "📱 ${it.name}" })
+            .mapIndexed { i, name -> "$name ${listOf("🔈 ទាប", "🔉 មធ្យម", "🔊 ខ្ពស់")[i.coerceAtMost(2)].let { if (i > 2) "🔔 ខ្ពស់ជាង" else it }}" }
+        mixerPanel.setEarStatus(
+            "🎧 ស្ដាប់កាស/ឧបាល័រទាំងអស់: ប៊ិបម្ដងក្នុង 1 វិនាទី (សំឡេងទាប→ខ្ពស់):\n" + who.joinToString("\n") +
+                "\nចុចលើ track ហើយកែ ⏱ Delay ±10 រហូតលឺប៊ិបតែមួយ។\nលឺយឺត → ＋   លឺលឿន → −",
+            running = true,
+        )
+        setStatus(hostStatus("🎧 វាស់ដោយត្រចៀក…"))
+    }
+
+    private fun stopEarMode() {
+        if (!earMode) return
+        earMode = false
+        main.removeCallbacks(earAutoStop)
+        server?.broadcast("TICKS 0")
+        mixerPanel.setEarStatus("ពាក់កាស ឬ Microphone ខូច? វាស់ដោយត្រចៀក →", running = false)
+        if (earResume) hostPlay() else setStatus(hostStatus("បានផ្អាក"))
+    }
+
     override fun onHostPreload(on: Boolean) {
         main.post {
             // Follows the host while connected (the switch is locked until disconnecting).
@@ -1321,8 +1432,35 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         }
     }
 
-    override fun onBeep(localTimes: List<Long>) {
-        thread(isDaemon = true) { AutoDelay.beep(localTimes) }
+    override fun onBeep(localTimes: List<Long>, hz: Double) {
+        thread(isDaemon = true) { AutoDelay.beep(localTimes, hz) }
+    }
+
+    /** Client: 🎧 beeps until the host says stop (or the time limit / disconnect). */
+    private val tickGeneration = java.util.concurrent.atomic.AtomicInteger()
+
+    override fun onTicks(localStart: Long?, periodMs: Long, hz: Double) {
+        val generation = tickGeneration.incrementAndGet()
+        if (localStart == null) return
+        thread(isDaemon = true) {
+            AutoDelay.ticks(localStart, periodMs, hz, { mixer.delayMs }) {
+                tickGeneration.get() == generation && now() < localStart + EAR_MAX_MS
+            }
+        }
+    }
+
+    /** Client: the host uses this phone's microphone for 🤖 Auto delay. */
+    override fun onListen(localUntil: Long, hz: Double, localTimes: List<List<Long>>) {
+        val c = client ?: return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            c.sendLags(null)
+            main.post { micPermission.launch(Manifest.permission.RECORD_AUDIO) }
+            return
+        }
+        thread(isDaemon = true) {
+            val rec = AutoDelay.record(localUntil)
+            c.sendLags(rec?.let { r -> localTimes.map { phone -> phone.map { AutoDelay.lag(r, it, hz) } } })
+        }
     }
 
     // ------------------------------------------------------------------ about
@@ -1438,6 +1576,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         main.post {
             client?.stop()
             client = null
+            tickGeneration.incrementAndGet()
             findViewById<View>(R.id.switchPreload).isEnabled = true
             // The remembered address didn't work (new IP?): look for that same host on the Wi-Fi.
             val knownId = reconnectingHostId
@@ -1883,6 +2022,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         // Clear these first: player callbacks can still arrive after this and must find nothing to do.
         val oldClient = client
         val oldServer = server
+        earMode = false
+        tickGeneration.incrementAndGet()
         client = null
         server = null
         oldClient?.stop()

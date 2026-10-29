@@ -22,7 +22,6 @@ import kotlin.math.sin
  */
 object AutoDelay {
     const val RATE = 48000
-    const val BEEP_HZ = 2000.0
     const val BEEP_MS = 80
     /** Time between two beeps; also the most delay that can be measured. */
     const val GAP_MS = 700L
@@ -35,13 +34,31 @@ object AutoDelay {
     private fun toMs(nano: Long): Double =
         (nano + SystemClock.elapsedRealtimeNanos() - System.nanoTime()) / 1_000_000.0
 
+    /** Beep pitch heard by people; the 🔇 silent option uses one most adults can't hear. */
+    const val AUDIBLE_HZ = 2000.0
+    const val SILENT_HZ = 19000.0
+
     /**
      * Plays a short beep at each of [times] (now() ms). Blocking; call on a background thread.
      * Uses the track's timestamp so the beep leaves the speaker on time as far as Android knows —
      * what's left is the delay Android doesn't report, which is what the music has too.
      */
-    fun beep(times: List<Long>) {
+    fun beep(times: List<Long>, hz: Double = AUDIBLE_HZ) {
         if (times.isEmpty()) return
+        val end = times.max() + BEEP_MS + 300
+        train(hz, running = { now() < end }) { k -> times.sorted().getOrNull(k) }
+    }
+
+    /**
+     * 🎧 By-ear mode: a beep every [periodMs] from [startMs] (now() ms), moved earlier by this
+     * phone's ⏱ Delay ([delayMs], read before every beep) just like the music is, until
+     * [running] turns false. Every phone together: one beep heard = in sync.
+     */
+    fun ticks(startMs: Long, periodMs: Long, hz: Double, delayMs: () -> Int, running: () -> Boolean) =
+        train(hz, running) { k -> startMs + k * periodMs - delayMs() }
+
+    /** Plays beep number 0, 1, 2… at [timeOf] (null = no more) while [running]. */
+    private fun train(hz: Double, running: () -> Boolean, timeOf: (Int) -> Long?) {
         val minBuf = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val track = AudioTrack.Builder()
             .setAudioAttributes(
@@ -63,39 +80,45 @@ object AutoDelay {
         try {
             track.play()
             val beepFrames = RATE * BEEP_MS / 1000
-            val starts = LongArray(times.size) { -1 }
             val chunk = ShortArray(RATE / 100)  // 10 ms
             val ts = AudioTimestamp()
             var written = 0L
-            val end = times.max() + BEEP_MS + 300
-            while (now() < end) {
-                // Where each beep should start in the stream, from the latest frame ↔ time mapping.
-                val haveTs = track.getTimestamp(ts) && ts.framePosition > 0
-                for (i in times.indices) {
-                    if (starts[i] >= 0 && starts[i] < written) continue  // already playing: keep it
-                    val target = toNano(times[i].toDouble())
-                    starts[i] = if (haveTs) {
-                        ts.framePosition + (target - ts.nanoTime) * RATE / 1_000_000_000L
-                    } else {
-                        track.playbackHeadPosition.toLong() + (times[i] - now()) * RATE / 1000
+            var k = 0
+            var start = -1L  // frame where beep k starts; fixed once it has begun
+            while (running()) {
+                // Where the beep should start in the stream, from the latest frame ↔ time mapping.
+                if (start < 0 || start >= written) {
+                    val time = timeOf(k)
+                    start = if (time == null) Long.MAX_VALUE else {
+                        if (track.getTimestamp(ts) && ts.framePosition > 0) {
+                            ts.framePosition + (toNano(time.toDouble()) - ts.nanoTime) * RATE / 1_000_000_000L
+                        } else {
+                            track.playbackHeadPosition.toLong() + (time - now()) * RATE / 1000
+                        }
+                    }
+                    // Too late for this one (e.g. the delay just jumped): go on with the next.
+                    if (start != Long.MAX_VALUE && start + beepFrames <= written) {
+                        k++
+                        start = -1
+                        continue
                     }
                 }
                 for (n in chunk.indices) {
                     val f = written + n
-                    var v = 0.0
-                    for (s in starts) {
-                        val k = f - s
-                        if (k in 0 until beepFrames) {
-                            // 5 ms fade in/out so it clicks less; the onset stays sharp.
-                            val fade = min(1.0, min(k, beepFrames - k) / (RATE * 0.005))
-                            v += sin(2 * PI * BEEP_HZ * k / RATE) * fade
-                        }
-                    }
-                    chunk[n] = (v.coerceIn(-1.0, 1.0) * 0.9 * Short.MAX_VALUE).toInt().toShort()
+                    val i = f - start
+                    chunk[n] = if (start != Long.MAX_VALUE && i in 0 until beepFrames) {
+                        // 5 ms fade in/out so it clicks less; the onset stays sharp.
+                        val fade = min(1.0, min(i, beepFrames - i) / (RATE * 0.005))
+                        (sin(2 * PI * hz * i / RATE) * fade * 0.9 * Short.MAX_VALUE).toInt().toShort()
+                    } else 0
                 }
                 val w = track.write(chunk, 0, chunk.size)
                 if (w <= 0) break
                 written += w
+                if (start != Long.MAX_VALUE && start >= 0 && written >= start + beepFrames) {
+                    k++
+                    start = -1
+                }
             }
         } catch (_: Exception) {
         } finally {
@@ -154,13 +177,13 @@ object AutoDelay {
      * When the beep expected at [expectedMs] was heard, minus [expectedMs] (ms), or null if it
      * wasn't clearly louder than the room. Looks from 150 ms early up to just before the next beep.
      */
-    fun lag(rec: Recording, expectedMs: Long): Double? {
+    fun lag(rec: Recording, expectedMs: Long, hz: Double = AUDIBLE_HZ): Double? {
         val win = RATE * 4 / 1000   // 4 ms Goertzel window
         val hop = RATE / 1000       // every 1 ms
         val from = ((expectedMs - 150 - rec.startMs) * RATE / 1000).toInt()
         val to = ((expectedMs + GAP_MS - 150 - rec.startMs) * RATE / 1000).toInt()
         if (from < 0 || to + win > rec.samples.size) return null
-        val coeff = 2 * cos(2 * PI * BEEP_HZ / RATE)
+        val coeff = 2 * cos(2 * PI * hz / RATE)
         val energy = DoubleArray((to - from) / hop)
         for (j in energy.indices) {
             var s1 = 0.0
