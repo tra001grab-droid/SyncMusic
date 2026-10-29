@@ -249,6 +249,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             holdOn = { prefs.getBoolean("sync_hold", false) },
             onHold = { on ->
                 prefs.edit().putBoolean("sync_hold", on).apply()
+                // The tracks stop moving: keep each phone's gap as it was at this moment.
+                heldGaps = if (on) server?.clientList()?.associate { c -> c.key to c.gapMs?.takeIf { now() - c.statAt < 5000 } } else null
                 server?.setHold(on)
             },
             note = {
@@ -1187,6 +1189,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     }
 
     /** Host: every phone's gap to the host for the mixer's track view (stale readings shown as unknown). */
+    /** ✋ Stop measuring (host): each phone's gap when it was turned on; the tracks show these. */
+    private var heldGaps: Map<Int, Long?>? = null
+
     private fun mixerTracks(): List<MixerPanel.Track> {
         val s = server ?: return emptyList()
         val self = mixer.current()
@@ -1196,10 +1201,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             val fresh = now() - c.statAt < 5000
             MixerPanel.Track(
                 "c${c.key}", c.name, false,
-                gapMs = if (fresh) c.gapMs else null,
+                gapMs = heldGaps?.let { it[c.key] } ?: if (fresh) c.gapMs else null,
                 rttMs = c.rttMs,
                 delayMs = mix?.delayMs ?: 0,
                 bluetooth = mix?.bluetooth == true,
+                held = prefs.getBoolean("sync_hold", false),
             )
         }
     }
@@ -1771,14 +1777,14 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             syncErrors.addLast(p.position - expected)
             if (syncErrors.size > 3) syncErrors.removeFirst()
             if (syncErrors.size < if (youtube) 3 else 2) return@post
-            val error = syncErrors.sorted()[syncErrors.size / 2]
-            client?.let { it.sendStat(error, it.bestRtt) }
-            // ✋ Stop measuring: keep reporting the gap (for the tracks) but leave the music alone.
+            // ✋ Stop measuring: no more corrections or gap reports; the music is left alone.
             if (syncHold) {
                 p.setSpeed(1f)
-                setStatus("✋ ឈប់វាស់ — ចាក់ដោយខ្លួនឯង\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
+                setStatus("✋ ឈប់វាស់ — ចាក់ដោយខ្លួនឯង")
                 return@post
             }
+            val error = syncErrors.sorted()[syncErrors.size / 2]
+            client?.let { it.sendStat(error, it.bestRtt) }
 
             // First steady reading after a jump shows how far buffering left us behind; learn it.
             if (measuringSeekLead && youtube) {

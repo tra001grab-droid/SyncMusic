@@ -54,6 +54,8 @@ class MixerPanel(
         val rttMs: Long?,
         val delayMs: Int,
         val bluetooth: Boolean,
+        /** ✋ Stop measuring is on: [gapMs] is the reading from when it was turned on. */
+        val held: Boolean = false,
     )
 
     private val trackTicker = object : Runnable {
@@ -100,7 +102,10 @@ class MixerPanel(
     init {
         root.findViewById<Button>(R.id.mixerClose).setOnClickListener { hide() }
         autoSwitch.isChecked = autoDelayOn()
+        // ✋ Stop measuring and 🤖 Auto exclude each other: turning one on turns the other off.
+        val holdSwitch: androidx.appcompat.widget.SwitchCompat = root.findViewById(R.id.mixerHold)
         autoSwitch.setOnCheckedChangeListener { _, on ->
+            if (on) holdSwitch.isChecked = false
             showAutoRow()
             onAutoDelay(on)
         }
@@ -111,9 +116,12 @@ class MixerPanel(
         }
         root.findViewById<Button>(R.id.mixerListener).setOnClickListener { onPickListener() }
         root.findViewById<Button>(R.id.mixerEar).setOnClickListener { onEar() }
-        root.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.mixerHold).apply {
+        holdSwitch.apply {
             isChecked = holdOn()
-            setOnCheckedChangeListener { _, on -> onHold(on) }
+            setOnCheckedChangeListener { _, on ->
+                if (on) autoSwitch.isChecked = false
+                onHold(on)
+            }
         }
         showAutoRow()
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
@@ -267,12 +275,13 @@ class MixerPanel(
         val gap = track.gapMs
         val gapText = when {
             track.isHost -> "0 ms (ទូរស័ព្ទមេ)"
+            gap == null && track.held -> "✋ ឈប់វាស់"
             gap == null -> "— (មិនទាន់ចាក់)"
             gap > 0 -> "+$gap ms លឿនជាង"
             gap < 0 -> "$gap ms យឺតជាង"
             else -> "0 ms"
         }
-        val rtt = track.rttMs?.let { " · RTT $it ms" } ?: ""
+        val rtt = (if (track.held && gap != null) " ✋" else "") + (track.rttMs?.let { " · RTT $it ms" } ?: "")
         val delay = if (track.delayMs != 0) " · ⏱ ${if (track.delayMs > 0) "+" else ""}${track.delayMs} ms" else ""
         (row.getChildAt(2) as TextView).text = gapText + rtt + delay
     }
