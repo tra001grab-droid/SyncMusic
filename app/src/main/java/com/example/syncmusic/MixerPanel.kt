@@ -40,6 +40,9 @@ class MixerPanel(
     /** 🎧 By-ear mode on/off. */
     private val onEar: () -> Unit = {},
     private val onHide: () -> Unit = {},
+    /** ✋ Stop measuring: clients stop correcting and just play on. */
+    private val holdOn: () -> Boolean = { false },
+    private val onHold: (on: Boolean) -> Unit = {},
 ) {
     /** One phone in the track view. [gapMs]: + = ahead of the host, null = no reading yet. */
     data class Track(
@@ -108,6 +111,10 @@ class MixerPanel(
         }
         root.findViewById<Button>(R.id.mixerListener).setOnClickListener { onPickListener() }
         root.findViewById<Button>(R.id.mixerEar).setOnClickListener { onEar() }
+        root.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.mixerHold).apply {
+            isChecked = holdOn()
+            setOnCheckedChangeListener { _, on -> onHold(on) }
+        }
         showAutoRow()
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
         mute.setOnClickListener { change(mix.copy(muted = !mix.muted)) }

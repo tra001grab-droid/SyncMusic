@@ -246,6 +246,11 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             onPickListener = ::pickListener,
             onEar = ::toggleEarMode,
             onHide = ::stopEarMode,
+            holdOn = { prefs.getBoolean("sync_hold", false) },
+            onHold = { on ->
+                prefs.edit().putBoolean("sync_hold", on).apply()
+                server?.setHold(on)
+            },
             note = {
                 val eq = when {
                     !mixer.eqAvailable -> "⚠ ទូរស័ព្ទនេះមិនអនុញ្ញាត EQ ទេ — Volume នៅតែដំណើរការ"
@@ -788,6 +793,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             }
             s.start()
             s.setPreload(YouTubeSyncPlayer.preloadEnabled)
+            s.setHold(prefs.getBoolean("sync_hold", false))
             server = s
             val info = NsdServiceInfo().apply {
                 serviceName = "SyncMusic"
@@ -1422,6 +1428,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (earResume) hostPlay() else setStatus(hostStatus("បានផ្អាក"))
     }
 
+    /** Client: ✋ the host stopped (or restarted) the continuous sync corrections. */
+    @Volatile private var syncHold = false
+
+    override fun onHold(on: Boolean) {
+        syncHold = on
+    }
+
     override fun onHostPreload(on: Boolean) {
         main.post {
             // Follows the host while connected (the switch is locked until disconnecting).
@@ -1577,6 +1590,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             client?.stop()
             client = null
             tickGeneration.incrementAndGet()
+            syncHold = false
             findViewById<View>(R.id.switchPreload).isEnabled = true
             // The remembered address didn't work (new IP?): look for that same host on the Wi-Fi.
             val knownId = reconnectingHostId
@@ -1759,6 +1773,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (syncErrors.size < if (youtube) 3 else 2) return@post
             val error = syncErrors.sorted()[syncErrors.size / 2]
             client?.let { it.sendStat(error, it.bestRtt) }
+            // ✋ Stop measuring: keep reporting the gap (for the tracks) but leave the music alone.
+            if (syncHold) {
+                p.setSpeed(1f)
+                setStatus("✋ ឈប់វាស់ — ចាក់ដោយខ្លួនឯង\nគម្លាត: $error ms · RTT ${client?.bestRtt} ms")
+                return@post
+            }
 
             // First steady reading after a jump shows how far buffering left us behind; learn it.
             if (measuringSeekLead && youtube) {

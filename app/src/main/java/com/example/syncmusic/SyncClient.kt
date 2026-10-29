@@ -50,6 +50,8 @@ class SyncClient(
         fun onListen(localUntil: Long, hz: Double, localTimes: List<List<Long>>)
         /** The host turned its 20% preload switch on/off; do the same. */
         fun onHostPreload(on: Boolean)
+        /** ✋ The host turned "stop measuring" on/off: on = no more corrections, just play on. */
+        fun onHold(on: Boolean)
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -182,6 +184,7 @@ class SyncClient(
             "NEXT" -> listener.onNext(p[1])
             "SETMIX" -> listener.onSetMix(p[1])
             "PRELOAD" -> listener.onHostPreload(p[1] == "1")
+            "HOLD" -> listener.onHold(p[1] == "1")
             "BEEP" -> listener.onBeep(
                 p[1].split(",").mapNotNull { it.toLongOrNull()?.minus(offset) },
                 p.getOrNull(2)?.toDoubleOrNull() ?: AutoDelay.AUDIBLE_HZ,
