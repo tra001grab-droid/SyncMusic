@@ -246,6 +246,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             onPickListener = ::pickListener,
             onEar = ::toggleEarMode,
             onHide = ::stopEarMode,
+            onShift = ::shiftCursor,
+            onAlign = ::alignCursor,
             holdOn = { prefs.getBoolean("sync_hold", false) },
             onHold = { on ->
                 prefs.edit().putBoolean("sync_hold", on).apply()
@@ -1195,10 +1197,19 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun mixerTracks(): List<MixerPanel.Track> {
         val s = server ?: return emptyList()
         val self = mixer.current()
-        val host = MixerPanel.Track(MixerPanel.SELF, "${Build.MODEL} (Host)", true, 0, null, self.delayMs, self.bluetooth)
+        // Cursors are what is heard: song position minus that phone's own ⏱ Delay.
+        val p = active?.takeIf { it.isActive && currentIndex >= 0 }
+        val hostCursor = p?.let { it.position - self.delayMs }
+        val host = MixerPanel.Track(
+            MixerPanel.SELF, "${Build.MODEL} (Host)", true, 0, null, self.delayMs, self.bluetooth,
+            cursorMs = hostCursor, durationMs = p?.durationMs ?: 0,
+        )
         return listOf(host) + s.clientList().map { c ->
             val mix = Mix.decode(c.mix)
             val fresh = now() - c.statAt < 5000
+            val cursor = if (c.cursorVersion == s.version && now() - c.cursorAt < 3000) {
+                c.cursorMs + (if (p?.isPlaying == true) now() - c.cursorAt else 0) - (mix?.delayMs ?: 0)
+            } else null
             MixerPanel.Track(
                 "c${c.key}", c.name, false,
                 gapMs = heldGaps?.let { it[c.key] } ?: if (fresh) c.gapMs else null,
@@ -1206,8 +1217,28 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 delayMs = mix?.delayMs ?: 0,
                 bluetooth = mix?.bluetooth == true,
                 held = prefs.getBoolean("sync_hold", false),
+                cursorMs = cursor,
+                durationMs = c.durationMs,
+                cursorGapMs = if (cursor != null && hostCursor != null) cursor - hostCursor else null,
             )
         }
+    }
+
+    /** Move a phone's cursor: its ⏱ Delay changes by [deltaMs] (+ = it plays further ahead). */
+    private fun shiftCursor(deviceId: String, deltaMs: Int) {
+        val mix = mixerGet(deviceId) ?: return
+        mixerSet(deviceId, mix.copy(delayMs = (mix.delayMs + deltaMs).coerceIn(Mix.MIN_DELAY_MS, Mix.MAX_DELAY_MS)))
+        mixerPanel.refresh()
+    }
+
+    /** 🎯 The phone (or ALL) jumps once to exactly where the host is now (also with ✋ on). */
+    private fun alignCursor(deviceId: String) {
+        val s = server ?: return
+        if (deviceId == MixerPanel.ALL) s.broadcast("ALIGN") else clientOf(deviceId)?.let { s.sendTo(it.key, "ALIGN") }
+        mixerPanel.setAlignStatus(
+            if (active?.isPlaying == true) "🎯 បានតម្រឹម cursor — រង់ចាំ 1-2 វិនាទី"
+            else "🎯 នឹងតម្រឹមពេលចាក់ (▶)"
+        )
     }
 
     private fun clientOf(deviceId: String) =
@@ -1243,7 +1274,12 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     override fun onSetMix(mix: String) {
         main.post {
+            val oldDelay = mixer.delayMs
             Mix.decode(mix)?.let { mixer.apply(it) }
+            // ✋ No corrections run while stopped, so move the music by the change right here.
+            val change = mixer.delayMs - oldDelay
+            val p = active
+            if (syncHold && change != 0 && p != null && p.isPlaying) p.seekTo(p.position + change)
             reportMix()
             mixerPanel.refresh()
         }
@@ -1439,6 +1475,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     override fun onHold(on: Boolean) {
         syncHold = on
+    }
+
+    /** Client: 🎯 jump to the host's position at the next POS. */
+    @Volatile private var alignOnce = false
+
+    override fun onAlign() {
+        alignOnce = true
     }
 
     override fun onHostPreload(on: Boolean) {
@@ -1767,6 +1810,18 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (!p.isActive) {
                 p.startFrom(expected + if (youtube) youtubeSeekLeadMs else 0L)
                 resetSync()
+                return@post
+            }
+            // Where we are, for the host's cursor view (also while ✋ stopped).
+            client?.sendCursor(version, p.position, p.durationMs, now())
+            // 🎯 Auto cursor: one exact jump to the host's position, whatever the settings.
+            if (alignOnce) {
+                alignOnce = false
+                p.setSpeed(1f)
+                p.seekTo(expected + if (youtube) youtubeSeekLeadMs else 0L)
+                resetSync()
+                measuringSeekLead = youtube
+                setStatus("🎯 បានតម្រឹមជាមួយ Host")
                 return@post
             }
             // Buffering, or just resumed: the position isn't trustworthy yet, so don't react.

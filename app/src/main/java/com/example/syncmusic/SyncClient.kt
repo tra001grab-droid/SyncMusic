@@ -52,6 +52,8 @@ class SyncClient(
         fun onHostPreload(on: Boolean)
         /** ✋ The host turned "stop measuring" on/off: on = no more corrections, just play on. */
         fun onHold(on: Boolean)
+        /** 🎯 Jump once to exactly the host's position (even with ✋ stop measuring on). */
+        fun onAlign()
         /** Connection failed or was lost (not called after [stop]). */
         fun onDisconnected(reason: String)
     }
@@ -136,6 +138,10 @@ class SyncClient(
     fun sendLags(lags: List<List<Double?>>?) =
         send("LAGS " + (lags?.joinToString(";") { phone -> phone.joinToString(",") { it?.let { "%.1f".format(java.util.Locale.US, it) } ?: "x" } } ?: "nomic"))
 
+    /** Our song position [posMs] at local time [localTime] (sent in host time). */
+    fun sendCursor(version: Int, posMs: Long, durationMs: Long, localTime: Long) =
+        send("CUR $version $posMs $durationMs ${localTime + offset}")
+
     fun sendStat(gapMs: Long, rttMs: Long) = send("STAT $gapMs $rttMs")
 
     private fun startPinging() = thread(name = "sync-ping", isDaemon = true) {
@@ -185,6 +191,7 @@ class SyncClient(
             "SETMIX" -> listener.onSetMix(p[1])
             "PRELOAD" -> listener.onHostPreload(p[1] == "1")
             "HOLD" -> listener.onHold(p[1] == "1")
+            "ALIGN" -> listener.onAlign()
             "BEEP" -> listener.onBeep(
                 p[1].split(",").mapNotNull { it.toLongOrNull()?.minus(offset) },
                 p.getOrNull(2)?.toDoubleOrNull() ?: AutoDelay.AUDIBLE_HZ,

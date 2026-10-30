@@ -43,6 +43,10 @@ class MixerPanel(
     /** ✋ Stop measuring: clients stop correcting and just play on. */
     private val holdOn: () -> Boolean = { false },
     private val onHold: (on: Boolean) -> Unit = {},
+    /** Move a phone's cursor by deltaMs (through its ⏱ Delay). */
+    private val onShift: (deviceId: String, deltaMs: Int) -> Unit = { _, _ -> },
+    /** 🎯 Line a phone's (or ALL phones') cursor up with the host's, once. */
+    private val onAlign: (deviceId: String) -> Unit = {},
 ) {
     /** One phone in the track view. [gapMs]: + = ahead of the host, null = no reading yet. */
     data class Track(
@@ -56,6 +60,11 @@ class MixerPanel(
         val bluetooth: Boolean,
         /** ✋ Stop measuring is on: [gapMs] is the reading from when it was turned on. */
         val held: Boolean = false,
+        /** Song position heard now (ms, own ⏱ Delay taken off) and length; null = not playing. */
+        val cursorMs: Long? = null,
+        val durationMs: Long = 0,
+        /** Cursor minus the host's (ms, + = ahead); null for the host or without a reading. */
+        val cursorGapMs: Long? = null,
     )
 
     private val trackTicker = object : Runnable {
@@ -116,6 +125,7 @@ class MixerPanel(
         }
         root.findViewById<Button>(R.id.mixerListener).setOnClickListener { onPickListener() }
         root.findViewById<Button>(R.id.mixerEar).setOnClickListener { onEar() }
+        root.findViewById<Button>(R.id.mixerAlign).setOnClickListener { onAlign(ALL) }
         holdSwitch.apply {
             isChecked = holdOn()
             setOnCheckedChangeListener { _, on ->
@@ -227,8 +237,7 @@ class MixerPanel(
             }
             box.addView(makeTrackRow().apply {
                 tag = ALL
-                getChildAt(1).visibility = View.GONE
-                getChildAt(2).visibility = View.GONE
+                for (i in 1 until childCount) getChildAt(i).visibility = View.GONE
                 setOnClickListener { toggle(ALL) }
             })
             if (expanded == null || expanded == ALL) box.addView(controls)
@@ -265,7 +274,31 @@ class MixerPanel(
         addView(TextView(activity).apply { setTextColor(Color.WHITE); textSize = 14f })
         addView(TrackBarView(activity), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)))
         addView(TextView(activity).apply { setTextColor(Color.LTGRAY); textSize = 12f })
+        // The song's whole length with a cursor where this phone is.
+        addView(android.widget.ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
+            progressTintList = ColorStateList.valueOf(0xFFE53935.toInt())
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)).apply { topMargin = dp(6) })
+        addView(TextView(activity).apply { setTextColor(Color.LTGRAY); textSize = 12f })
+        // Move this phone's cursor: earlier / later / 🎯 to the host.
+        addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            for ((label, delta) in listOf("−50" to -50, "−10" to -10, "🎯" to 0, "+10" to 10, "+50" to 50)) {
+                addView(Button(activity).apply {
+                    text = label
+                    isAllCaps = false
+                    minWidth = 0
+                    minimumWidth = 0
+                    setPadding(0, 0, 0, 0)
+                    setOnClickListener {
+                        val id = this@apply.parent.parent.let { (it as View).tag as? String } ?: return@setOnClickListener
+                        if (delta == 0) onAlign(id) else onShift(id, delta)
+                    }
+                }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            }
+        })
     }
+
+    private fun clock(ms: Long) = "%d:%02d.%d".format(ms / 60000, ms / 1000 % 60, ms / 100 % 10)
 
     private fun bindTrackRow(row: LinearLayout, track: Track, open: Boolean) {
         (row.getChildAt(0) as TextView).text = (if (open) "▾ " else "▸ ") +
@@ -284,6 +317,23 @@ class MixerPanel(
         val rtt = (if (track.held && gap != null) " ✋" else "") + (track.rttMs?.let { " · RTT $it ms" } ?: "")
         val delay = if (track.delayMs != 0) " · ⏱ ${if (track.delayMs > 0) "+" else ""}${track.delayMs} ms" else ""
         (row.getChildAt(2) as TextView).text = gapText + rtt + delay
+        val bar = row.getChildAt(3) as android.widget.ProgressBar
+        val cursor = track.cursorMs
+        bar.max = track.durationMs.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
+        bar.progress = (cursor ?: 0).coerceIn(0, track.durationMs).toInt()
+        val cursorGap = track.cursorGapMs
+        (row.getChildAt(4) as TextView).text = when {
+            cursor == null -> "⏱ — / —"
+            else -> "⏱ ${clock(cursor.coerceAtLeast(0))} / ${clock(track.durationMs)}" + when {
+                track.isHost -> "  (គោល)"
+                cursorGap == null -> ""
+                cursorGap > 0 -> "  ▶ លឿន +$cursorGap ms"
+                cursorGap < 0 -> "  ◀ យឺត $cursorGap ms"
+                else -> "  ✔ ត្រូវគ្នា"
+            }
+        }
+        // The host is the reference: nothing to move.
+        row.getChildAt(5).visibility = if (track.isHost) View.GONE else View.VISIBLE
     }
 
     private fun showAutoRow() {
@@ -309,6 +359,11 @@ class MixerPanel(
     /** Progress/result of the 🤖 Auto delay measurement. */
     fun setAutoStatus(text: String) {
         autoStatus.text = text
+    }
+
+    /** Result of 🎯 Auto cursor. */
+    fun setAlignStatus(text: String) {
+        root.findViewById<TextView>(R.id.mixerAlignStatus).text = text
     }
 
     fun hide() {
