@@ -139,8 +139,8 @@ class SyncClient(
         send("LAGS " + (lags?.joinToString(";") { phone -> phone.joinToString(",") { it?.let { "%.1f".format(java.util.Locale.US, it) } ?: "x" } } ?: "nomic"))
 
     /** Our song position [posMs] at local time [localTime] (sent in host time). */
-    fun sendCursor(version: Int, posMs: Long, durationMs: Long, localTime: Long) =
-        send("CUR $version $posMs $durationMs ${localTime + offset}")
+    fun sendCursor(version: Int, posMs: Long, durationMs: Long, localTime: Long, bufferedMs: Long) =
+        send("CUR $version $posMs $durationMs ${localTime + offset} $bufferedMs")
 
     fun sendStat(gapMs: Long, rttMs: Long) = send("STAT $gapMs $rttMs")
 

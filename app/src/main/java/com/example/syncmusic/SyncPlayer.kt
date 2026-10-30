@@ -19,6 +19,8 @@ interface SyncPlayer {
     val position: Long
     /** Length of the current song/video in ms (0 while unknown). */
     val durationMs: Long
+    /** How far the song is downloaded/buffered (ms). */
+    val bufferedMs: Long
     /** True once playback was requested (even while still buffering). */
     val isActive: Boolean
     /** True only while audio is actually advancing (not buffering, not paused). */
@@ -57,6 +59,7 @@ class LocalPlayer(context: Context, audioSessionId: Int, onEnded: () -> Unit) : 
 
     override val position get() = exo.currentPosition
     override val durationMs get() = exo.duration.coerceAtLeast(0L)
+    override val bufferedMs get() = exo.bufferedPosition
     override val isActive get() = exo.playWhenReady
     override val isPlaying get() = exo.isPlaying
     override val steadyMs get() = if (exo.isPlaying && playingSince > 0) now() - playingSince else 0L
@@ -133,6 +136,7 @@ class YouTubeSyncPlayer(
     /** Set once [videoId] is buffered and waiting paused at the start. */
     private var prepared = false
     private var durationSec = 0f
+    private var loadedFraction = 0f
     private var fullyLoadedReported = false
     private var nudgeToken = 0
     /** True while temporarily playing at 1.25x/0.75x to close a small gap. */
@@ -162,6 +166,7 @@ class YouTubeSyncPlayer(
             }
 
             override fun onVideoLoadedFraction(youTubePlayer: YouTubePlayer, loadedFraction: Float) {
+                this@YouTubeSyncPlayer.loadedFraction = loadedFraction
                 if (!preloading) {
                     // YouTube doesn't always buffer a long video to 100%, so "90s left" counts too.
                     val nearEnd = durationSec > 0 && durationSec - lastSecond < 90
@@ -209,6 +214,7 @@ class YouTubeSyncPlayer(
             return now() - anchors.minOf { it.second }
         }
     override val durationMs get() = (durationSec * 1000).toLong()
+    override val bufferedMs get() = (loadedFraction * durationMs).toLong()
     override val isActive get() = requested
     override val isPlaying get() = playing
     override val steadyMs get() = if (playing && playingSince > 0 && !isNudging) now() - playingSince else 0L
@@ -256,6 +262,7 @@ class YouTubeSyncPlayer(
         this.videoId = videoId
         prepared = false
         durationSec = 0f
+        loadedFraction = 0f
         fullyLoadedReported = false
         if (player == null) pendingVideo = videoId else preload(videoId)
     }

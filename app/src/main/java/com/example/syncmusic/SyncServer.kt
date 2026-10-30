@@ -30,7 +30,7 @@ import kotlin.concurrent.thread
  *                    LISTEN <until> <hz> <t,t;t,t;...>  (🤖 Auto delay with this phone's mic: the
  *                                     beep times of every phone; answered with LAGS)
  *                    TICKS <start> <periodMs> <hz> | TICKS 0  (🎧 by ear: beep every period / stop)
- *   client -> host : CUR <version> <posMs> <durationMs> <hostTime>  (its song position, every second)
+ *   client -> host : CUR <version> <posMs> <durationMs> <hostTime> <bufferedMs>  (song position, every second)
  *   host -> client : ALIGN          (🎯 jump once to exactly where the host is, even with ✋ on)
  *   client -> host : LAGS <lag,lag;lag,lag;...> | LAGS nomic   ("x" = beep not heard)
  */
@@ -76,6 +76,7 @@ class SyncServer(
         @Volatile var cursorAt: Long = 0
         @Volatile var durationMs: Long = 0
         @Volatile var cursorVersion: Int = -1
+        @Volatile var bufferedMs: Long = 0
     }
 
     private val info = ConcurrentHashMap<PrintWriter, ClientInfo>()
@@ -205,6 +206,7 @@ class SyncServer(
                         c.cursorMs = parts.getOrNull(2)?.toLongOrNull() ?: 0
                         c.durationMs = parts.getOrNull(3)?.toLongOrNull() ?: 0
                         c.cursorAt = parts.getOrNull(4)?.toLongOrNull() ?: 0
+                        c.bufferedMs = parts.getOrNull(5)?.toLongOrNull() ?: c.durationMs
                     }
                     "STAT" -> info[out]?.let { c ->
                         c.gapMs = parts.getOrNull(1)?.toLongOrNull()

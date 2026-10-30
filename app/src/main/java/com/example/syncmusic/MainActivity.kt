@@ -158,6 +158,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 // tell every client to jump to a wrong time.
                 // Report what is heard from the host: its media position minus its own sound delay.
                 if (p.isPlaying) s.broadcast("POS ${s.version} ${p.position - calibrationMs} ${now()}")
+                if (p.isPlaying) checkAutoCursor()
                 updateNextButton()
                 main.postDelayed(this, POS_INTERVAL_MS)
             }
@@ -248,6 +249,9 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             onHide = ::stopEarMode,
             onShift = ::shiftCursor,
             onAlign = ::alignCursor,
+            autoCursorOn = { autoCursor },
+            onAutoCursor = ::toggleAutoCursor,
+            onMute = { id -> mixerGet(id)?.let { mixerSet(id, it.copy(muted = !it.muted)); mixerPanel.refresh() } },
             holdOn = { prefs.getBoolean("sync_hold", false) },
             onHold = { on ->
                 prefs.edit().putBoolean("sync_hold", on).apply()
@@ -1203,6 +1207,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val host = MixerPanel.Track(
             MixerPanel.SELF, "${Build.MODEL} (Host)", true, 0, null, self.delayMs, self.bluetooth,
             cursorMs = hostCursor, durationMs = p?.durationMs ?: 0,
+            bufferedMs = p?.bufferedMs ?: 0, muted = self.muted,
         )
         return listOf(host) + s.clientList().map { c ->
             val mix = Mix.decode(c.mix)
@@ -1220,6 +1225,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 cursorMs = cursor,
                 durationMs = c.durationMs,
                 cursorGapMs = if (cursor != null && hostCursor != null) cursor - hostCursor else null,
+                bufferedMs = c.bufferedMs,
+                muted = mix?.muted == true,
             )
         }
     }
@@ -1239,6 +1246,40 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             if (active?.isPlaying == true) "🎯 បានតម្រឹម cursor — រង់ចាំ 1-2 វិនាទី"
             else "🎯 នឹងតម្រឹមពេលចាក់ (▶)"
         )
+    }
+
+    /**
+     * 🎯 Auto cursor (host): while on, a phone whose cursor drifts too far from the host's is
+     * lined up again (one jump, also with ✋ on). Checked every second while playing.
+     */
+    private var autoCursor = false
+    private val lastAlign = mutableMapOf<Int, Long>()
+
+    private fun toggleAutoCursor() {
+        autoCursor = !autoCursor
+        if (autoCursor) {
+            lastAlign.clear()
+            alignCursor(MixerPanel.ALL)
+        } else {
+            mixerPanel.setAlignStatus("ទីតាំងបទ (cursor) របស់ទូរស័ព្ទនីមួយៗ ខាងក្រោម →")
+        }
+    }
+
+    private fun checkAutoCursor() {
+        val s = server ?: return
+        if (!autoCursor) return
+        val youtube = active === ytPlayer
+        // YouTube lands less exactly after a jump and needs time to buffer: allow it more.
+        val limit = if (youtube) 120L else 40L
+        val wait = if (youtube) 8000L else 4000L
+        for (track in mixerTracks()) {
+            val gap = track.cursorGapMs ?: continue
+            val c = clientOf(track.id) ?: continue
+            if (abs(gap) > limit && now() - (lastAlign[c.key] ?: 0L) > wait) {
+                lastAlign[c.key] = now()
+                s.sendTo(c.key, "ALIGN")
+            }
+        }
     }
 
     private fun clientOf(deviceId: String) =
@@ -1813,7 +1854,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 return@post
             }
             // Where we are, for the host's cursor view (also while ✋ stopped).
-            client?.sendCursor(version, p.position, p.durationMs, now())
+            client?.sendCursor(version, p.position, p.durationMs, now(), p.bufferedMs)
             // 🎯 Auto cursor: one exact jump to the host's position, whatever the settings.
             if (alignOnce) {
                 alignOnce = false
