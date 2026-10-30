@@ -122,6 +122,12 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
     val eqWorksForYouTube get() = support.globalEq
     val eqAvailable get() = support.eq || support.globalEq
 
+    /**
+     * The volume before 🔇 Mute (-1 = not muted by us). Some phones report volume 0 while muted,
+     * so without this unmuting would come back silent; unmuting restores this level.
+     */
+    private var volumeBeforeMute = prefs.getInt("volume_before_mute", -1)
+
     private var bands: List<Int> = Mix.decode(prefs.getString("mix", null))?.bands ?: List(Mix.BAND_HZ.size) { 0 }
 
     init {
@@ -133,8 +139,10 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
         val index = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         // Boost only counts while the phone is at full volume (volume keys down = no boost shown).
-        val volume = if (index >= max) 100 + boost else index * 100 / max
-        return Mix(volume, audio.isStreamMute(AudioManager.STREAM_MUSIC), bands, boostUnlocked, delayMs, bluetoothOutput())
+        val muted = audio.isStreamMute(AudioManager.STREAM_MUSIC)
+        val volume = if (muted && volumeBeforeMute >= 0) volumeBeforeMute
+            else if (index >= max) 100 + boost else index * 100 / max
+        return Mix(volume, muted, bands, boostUnlocked, delayMs, bluetoothOutput())
     }
 
     fun apply(mix: Mix) {
@@ -146,13 +154,9 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
             boostUnlocked = mix.boostUnlocked
             prefs.edit().putBoolean("boost_unlocked", boostUnlocked).apply()
         }
-        val volume = if (boostUnlocked) mix.volume else mix.volume.coerceAtMost(100)
-        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val base = volume.coerceAtMost(100)
-        runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, (base * max + 50) / 100, 0) }
-        val newBoost = (volume - 100).coerceIn(0, 100)
-        if (newBoost != boost) applyBoost(newBoost)
-        if (mix.muted != audio.isStreamMute(AudioManager.STREAM_MUSIC)) {
+        val wasMuted = audio.isStreamMute(AudioManager.STREAM_MUSIC)
+        // Unmute before setting the level: some phones put their own old level back on unmute.
+        if (mix.muted != wasMuted) {
             runCatching {
                 audio.adjustStreamVolume(
                     AudioManager.STREAM_MUSIC,
@@ -160,7 +164,27 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
                 )
             }
         }
+        if (mix.muted) {
+            // Remember the level (what's on screen) and leave the volume alone while muted.
+            setVolumeBeforeMute(mix.volume)
+        } else {
+            // Unmuting: back to the level from before muting.
+            val wanted = if (wasMuted && volumeBeforeMute >= 0) volumeBeforeMute else mix.volume
+            setVolumeBeforeMute(-1)
+            val volume = if (boostUnlocked) wanted else wanted.coerceAtMost(100)
+            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val base = volume.coerceAtMost(100)
+            runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, (base * max + 50) / 100, 0) }
+            val newBoost = (volume - 100).coerceIn(0, 100)
+            if (newBoost != boost) applyBoost(newBoost)
+        }
         if (mix.bands != bands) applyEq(mix.bands)
+    }
+
+    private fun setVolumeBeforeMute(volume: Int) {
+        if (volume == volumeBeforeMute) return
+        volumeBeforeMute = volume
+        prefs.edit().putInt("volume_before_mute", volume).apply()
     }
 
     private fun applyBoost(percent: Int) {
