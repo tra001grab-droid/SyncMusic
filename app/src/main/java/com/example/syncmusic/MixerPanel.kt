@@ -89,7 +89,7 @@ class MixerPanel(
          * Show 🤖 Auto, ✋ stop measuring, 🔇 silent, 🎙 listener and 🎧 by ear. Hidden for now
          * (they still work, and count as off while hidden); set true to bring them back.
          */
-        const val MEASURE_TOOLS = false
+        const val MEASURE_TOOLS = true
     }
 
     private val deviceRow: LinearLayout = root.findViewById(R.id.mixerDevices)
