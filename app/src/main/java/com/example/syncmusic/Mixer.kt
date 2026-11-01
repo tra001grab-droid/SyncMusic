@@ -135,6 +135,10 @@ class Mixer(context: Context, private val prefs: SharedPreferences) {
         applyBoost(if (boostUnlocked) boost else 0)
     }
 
+    /** The phone's media volume step (0..[maxVolumeIndex]), as the side buttons move it. */
+    fun volumeIndex() = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+    val maxVolumeIndex get() = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+
     fun current(): Mix {
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
         val index = audio.getStreamVolume(AudioManager.STREAM_MUSIC)

@@ -784,6 +784,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         if (hosting) return
         hosting = true
         prefs.edit().putString("last_role", "host").apply()
+        lastHostVolumeIndex = mixer.volumeIndex()
         showPanel(host = true)
         if (playlist.isEmpty()) {
             playlist.addAll(PlaylistStore.load(File(filesDir, "playlist.json"), filesDir))
@@ -1175,8 +1176,32 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
             reportMix()
+            masterVolume()
             mixerPanel.refresh()
         }
+    }
+
+    /** The host's volume step as last seen; changes the app made itself are recorded here first. */
+    private var lastHostVolumeIndex = -1
+
+    /**
+     * Host: its own volume moved (side buttons, also with the screen off) → every joined phone's
+     * volume moves by the same amount, like a master volume. Changes made in the mixer don't count.
+     */
+    private fun masterVolume() {
+        val s = server ?: return
+        val index = mixer.volumeIndex()
+        val last = lastHostVolumeIndex
+        lastHostVolumeIndex = index
+        if (last < 0 || index == last) return
+        val delta = (index - last) * 100 / mixer.maxVolumeIndex
+        for (c in s.clientList()) {
+            val mix = Mix.decode(c.mix) ?: continue
+            // Not into Boost (above 100%) this way; a phone already there can only come down.
+            val volume = (mix.volume + delta).coerceIn(0, maxOf(100, mix.volume))
+            if (volume != mix.volume) setClientMix(c, mix.copy(volume = volume))
+        }
+        setStatus(hostStatus("🔊 Master volume: ${if (delta > 0) "+" else ""}$delta% គ្រប់ទូរស័ព្ទ"))
     }
 
     /** Client: tell the host our current volume/EQ (only when it changed). */
@@ -1313,6 +1338,8 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             }
             else -> clientOf(deviceId)?.let { setClientMix(it, mix) }
         }
+        // The host's volume changed here, not with its buttons: not a master volume move.
+        lastHostVolumeIndex = mixer.volumeIndex()
     }
 
     private fun setClientMix(target: SyncServer.ClientInfo, mix: Mix) {
