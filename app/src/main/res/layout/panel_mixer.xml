@@ -144,6 +144,7 @@
 
                 <!-- 🎧 By ear: for earphones / broken microphones. Every phone beeps together. -->
                 <LinearLayout
+                    android:id="@+id/mixerEarRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"

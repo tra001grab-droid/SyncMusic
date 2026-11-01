@@ -85,6 +85,11 @@ class MixerPanel(
     companion object {
         const val SELF = "self"
         const val ALL = "all"
+        /**
+         * Show 🤖 Auto, ✋ stop measuring, 🔇 silent, 🎙 listener and 🎧 by ear. Hidden for now
+         * (they still work, and count as off while hidden); set true to bring them back.
+         */
+        const val MEASURE_TOOLS = false
     }
 
     private val deviceRow: LinearLayout = root.findViewById(R.id.mixerDevices)
@@ -146,6 +151,11 @@ class MixerPanel(
             }
         }
         showAutoRow()
+        if (!MEASURE_TOOLS) {
+            for (id in listOf(R.id.mixerHold, R.id.mixerAutoDelay, R.id.mixerAutoRow, R.id.mixerAutoOptions, R.id.mixerEarRow)) {
+                root.findViewById<View>(id).visibility = View.GONE
+            }
+        }
         volume.setOnSeekBarChangeListener(listener { value -> change(mix.copy(volume = value)) })
         mute.setOnClickListener { change(mix.copy(muted = !mix.muted)) }
         // Slider steps of 10 ms from -500 to +500; the buttons fine-tune by 10 ms.
@@ -377,7 +387,7 @@ class MixerPanel(
     }
 
     private fun showAutoRow() {
-        val visibility = if (autoSwitch.isChecked) View.VISIBLE else View.GONE
+        val visibility = if (autoSwitch.isChecked && MEASURE_TOOLS) View.VISIBLE else View.GONE
         root.findViewById<View>(R.id.mixerAutoRow).visibility = visibility
         root.findViewById<View>(R.id.mixerAutoOptions).visibility = visibility
         updateListener()

@@ -235,7 +235,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             getMix = ::mixerGet,
             setMix = ::mixerSet,
             tracks = ::mixerTracks,
-            autoDelayOn = { prefs.getBoolean("auto_delay", false) },
+            autoDelayOn = { autoDelayPref },
             onAutoDelay = { on ->
                 prefs.edit().putBoolean("auto_delay", on).apply()
                 if (on) runAutoDelay()
@@ -252,7 +252,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             autoCursorOn = { autoCursor },
             onAutoCursor = ::toggleAutoCursor,
             onMute = { id -> mixerGet(id)?.let { mixerSet(id, it.copy(muted = !it.muted)); mixerPanel.refresh() } },
-            holdOn = { prefs.getBoolean("sync_hold", false) },
+            holdOn = { holdPref },
             onHold = { on ->
                 prefs.edit().putBoolean("sync_hold", on).apply()
                 // The tracks stop moving: keep each phone's gap as it was at this moment.
@@ -801,7 +801,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
             }
             s.start()
             s.setPreload(YouTubeSyncPlayer.preloadEnabled)
-            s.setHold(prefs.getBoolean("sync_hold", false))
+            s.setHold(holdPref)
             server = s
             val info = NsdServiceInfo().apply {
                 serviceName = "SyncMusic"
@@ -1198,6 +1198,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     /** ✋ Stop measuring (host): each phone's gap when it was turned on; the tracks show these. */
     private var heldGaps: Map<Int, Long?>? = null
 
+    /*
+     * 🤖 Auto / ✋ stop measuring / 🎧 by ear / 🔇 / 🎙 are hidden for now (MixerPanel.MEASURE_TOOLS);
+     * while hidden they count as off. Their saved settings stay, for when they are shown again.
+     */
+    private val autoDelayPref get() = MixerPanel.MEASURE_TOOLS && prefs.getBoolean("auto_delay", false)
+    private val holdPref get() = MixerPanel.MEASURE_TOOLS && prefs.getBoolean("sync_hold", false)
+
     private fun mixerTracks(): List<MixerPanel.Track> {
         val s = server ?: return emptyList()
         val self = mixer.current()
@@ -1221,7 +1228,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 rttMs = c.rttMs,
                 delayMs = mix?.delayMs ?: 0,
                 bluetooth = mix?.bluetooth == true,
-                held = prefs.getBoolean("sync_hold", false),
+                held = holdPref,
                 cursorMs = cursor,
                 durationMs = c.durationMs,
                 cursorGapMs = if (cursor != null && hostCursor != null) cursor - hostCursor else null,
@@ -1360,7 +1367,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private fun autoMeasureNewPhones() {
         val s = server ?: return
-        if (!prefs.getBoolean("auto_delay", false) || measuringDelay || earMode) return
+        if (!autoDelayPref || measuringDelay || earMode) return
         // Wait for its MIX (it knows its own delay) and let it settle in before beeping.
         if (s.clientList().any { it.mix != null && it.key !in measuredKeys }) {
             main.removeCallbacks(autoMeasure)
