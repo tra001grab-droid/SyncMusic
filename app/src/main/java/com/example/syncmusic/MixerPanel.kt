@@ -31,6 +31,8 @@ class MixerPanel(
     private val autoDelayOn: () -> Boolean = { false },
     private val onAutoDelay: (on: Boolean) -> Unit = {},
     private val onMeasure: () -> Unit = {},
+    /** 🎵 Measure with the music itself. */
+    private val onMeasureMusic: () -> Unit = {},
     /** 🔇 silent (19 kHz) beeps for the microphone measurement. */
     private val silentOn: () -> Boolean = { false },
     private val onSilent: (on: Boolean) -> Unit = {},
@@ -132,6 +134,7 @@ class MixerPanel(
             onAutoDelay(on)
         }
         root.findViewById<Button>(R.id.mixerAutoRun).setOnClickListener { onMeasure() }
+        root.findViewById<Button>(R.id.mixerMusicRun).setOnClickListener { onMeasureMusic() }
         root.findViewById<android.widget.CheckBox>(R.id.mixerSilent).apply {
             isChecked = silentOn()
             setOnCheckedChangeListener { _, on -> onSilent(on) }

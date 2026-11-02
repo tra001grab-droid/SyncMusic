@@ -209,4 +209,66 @@ object AutoDelay {
         val heardMs = rec.startMs + (from + j * hop + win / 2) * 1000.0 / RATE
         return heardMs - expectedMs
     }
+
+    /**
+     * 🎵 Music measurement: [a] and [b] are the host's microphone hearing one phone each, playing
+     * the same part of the song. [aPos]/[bPos]: that phone's song position minus host time (ms),
+     * i.e. position = time + pos. Returns how much later [b]'s phone is heard than [a]'s at the
+     * same song position (ms), or null if the two recordings don't match clearly.
+     */
+    fun musicLag(a: Recording, aPos: Double, b: Recording, bPos: Double): Double? {
+        val rate = 8000          // compare at 8 kHz: plenty for ~1 ms and quick
+        val maxLag = rate / 2    // ±500 ms
+        // Song positions both recordings cover, less room for the search.
+        val aFrom = a.startMs + aPos
+        val bFrom = b.startMs + bPos
+        val aTo = aFrom + a.samples.size * 1000.0 / RATE
+        val bTo = bFrom + b.samples.size * 1000.0 / RATE
+        val from = maxOf(aFrom, bFrom) + 500
+        val to = minOf(aTo, bTo) - 500
+        val n = ((to - from) * rate / 1000).toInt()
+        if (n < rate) return null  // need at least a second in common
+        fun resample(r: Recording, pos: Double, extra: Int): FloatArray {
+            // Sample k is song position from + (k - extra) / rate; 48 kHz averaged down, then the
+            // change from sample to sample (sharpens the match, drops hum).
+            val out = FloatArray(n + 2 * extra)
+            var prev = 0f
+            for (k in out.indices) {
+                val q = from + (k - extra) * 1000.0 / rate
+                val i = ((q - pos - r.startMs) * RATE / 1000).toInt()
+                var sum = 0f
+                for (j in 0 until RATE / rate) {
+                    sum += r.samples.getOrElse(i + j) { 0 }.toFloat()
+                }
+                out[k] = sum - prev
+                prev = sum
+            }
+            return out
+        }
+        val x = resample(a, aPos, 0)
+        val y = resample(b, bPos, maxLag)
+        var energyX = 0.0
+        for (v in x) energyX += v.toDouble() * v
+        val score = DoubleArray(2 * maxLag + 1)
+        for (lag in score.indices) {
+            var sum = 0.0
+            var energyY = 0.0
+            for (k in 0 until n) {
+                val v = y[k + lag]
+                sum += x[k] * v
+                energyY += v.toDouble() * v
+            }
+            score[lag] = if (energyX > 0 && energyY > 0) sum / kotlin.math.sqrt(energyX * energyY) else 0.0
+        }
+        val best = score.indices.maxBy { score[it] }
+        if (score[best] < 0.2) return null
+        // Between samples: fit a parabola through the peak and its neighbours.
+        val shift = if (best in 1 until score.size - 1) {
+            val l = score[best - 1]
+            val r = score[best + 1]
+            val d = l - 2 * score[best] + r
+            if (d != 0.0) 0.5 * (l - r) / d else 0.0
+        } else 0.0
+        return (best - maxLag + shift) * 1000.0 / rate
+    }
 }

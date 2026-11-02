@@ -241,6 +241,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
                 if (on) runAutoDelay()
             },
             onMeasure = ::runAutoDelay,
+            onMeasureMusic = ::runMusicDelay,
             silentOn = { prefs.getBoolean("auto_silent", false) },
             onSilent = { on -> prefs.edit().putBoolean("auto_silent", on).apply() },
             listenerName = ::listenerName,
@@ -1299,7 +1300,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     private fun checkAutoCursor() {
         val s = server ?: return
-        if (!autoCursor) return
+        if (!autoCursor || measuringDelay) return
         val youtube = active === ytPlayer
         // YouTube lands less exactly after a jump and needs time to buffer: allow it more.
         val limit = if (youtube) 120L else 40L
@@ -1480,28 +1481,142 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
     private fun finishAutoDelay(phones: List<SyncServer.ClientInfo>, lags: List<Double?>?, error: String?, resume: Boolean) {
         measuringDelay = false
         measuredKeys += phones.map { it.key }
-        val hostLag = lags?.getOrNull(0)
         val text = when {
             error != null || lags == null -> error ?: "⚠"
-            hostLag == null -> "⚠ មិនឮសំឡេងទូរស័ព្ទមេ — បើក Volume / ដាក់ទូរស័ព្ទជិតគ្នា ហើយចុច 🔄" +
+            lags.getOrNull(0) == null -> "⚠ មិនឮសំឡេងទូរស័ព្ទមេ — បើក Volume / ដាក់ទូរស័ព្ទជិតគ្នា ហើយចុច 🔄" +
                 if (beepHz == AutoDelay.SILENT_HZ) "\n(ឬបិទ 🔇 ប៊ិបស្ងាត់ — ឧបាល័រខ្លះមិនអាចចេញ 19 kHz)" else ""
-            else -> "✔ បានកំណត់ Delay ស្វ័យប្រវត្តិ:\n" + phones.mapIndexed { i, c ->
-                val lag = lags.getOrNull(i + 1)
-                val mix = Mix.decode(c.mix)
-                if (lag == null || mix == null) {
-                    "📱 ${c.name}: ✖ មិនឮ (Volume ទាប/កាស/iPhone) — ប្រើ 🎧"
-                } else {
-                    // Heard later than the host = its sound comes out late = it should play ahead.
-                    val delay = (mixer.delayMs + ((lag - hostLag) / 10).roundToInt() * 10)
-                        .coerceIn(Mix.MIN_DELAY_MS, Mix.MAX_DELAY_MS)
-                    setClientMix(c, mix.copy(delayMs = delay))
-                    "📱 ${c.name}: ⏱ ${if (delay > 0) "+" else ""}$delay ms"
-                }
-            }.joinToString("\n")
+            else -> applyDelays(phones, lags)
         }
         mixerPanel.setAutoStatus(text)
         mixerPanel.refresh()
         if (resume) hostPlay() else setStatus(hostStatus("បានផ្អាក"))
+    }
+
+    /**
+     * Sets every phone's ⏱ Delay, the host's included, from how late each one is heard ([lags]:
+     * host first, then [phones]; null = not heard). Only differences matter, so the phones that
+     * already agree (the majority) keep their delay and the odd one out — the host too — moves.
+     */
+    private fun applyDelays(phones: List<SyncServer.ClientInfo>, lags: List<Double?>): String {
+        class Phone(val name: String, val lag: Double, val delay: Int, val set: (Int) -> Unit)
+        val heard = mutableListOf<Phone>()
+        lags[0]?.let { lag ->
+            heard += Phone("👑 ${Build.MODEL} (Host)", lag, mixer.delayMs) { d ->
+                mixerSet(MixerPanel.SELF, mixer.current().copy(delayMs = d))
+            }
+        }
+        val missing = mutableListOf<String>()
+        phones.forEachIndexed { i, c ->
+            val lag = lags.getOrNull(i + 1)
+            val mix = Mix.decode(c.mix)
+            if (lag == null || mix == null) missing += "📱 ${c.name}: ✖ មិនឮ (Volume ទាប/កាស/iPhone) — ប្រើ 🎧"
+            else heard += Phone("📱 ${c.name}", lag, mix.delayMs) { d -> setClientMix(c, mix.copy(delayMs = d)) }
+        }
+        // Heard later = its sound comes out late = it should play further ahead: delay - lag must
+        // be the same for everyone. Which value: the middle one, so most phones stay put (with
+        // only two phones the host's).
+        val offsets = heard.map { it.delay - it.lag }.sorted()
+        val host = heard.firstOrNull()?.takeIf { lags[0] != null }
+        val common = if (heard.size <= 2 && host != null) host.delay - host.lag else offsets[offsets.size / 2]
+        val lines = heard.map { phone ->
+            val delay = ((phone.lag + common) / 10).roundToInt() * 10
+            val d = delay.coerceIn(Mix.MIN_DELAY_MS, Mix.MAX_DELAY_MS)
+            val changed = d != phone.delay
+            if (changed) phone.set(d)
+            "${phone.name}: ⏱ ${if (d > 0) "+" else ""}$d ms" + if (changed) "" else " (ដដែល)"
+        }
+        return "✔ បានកំណត់ Delay ស្វ័យប្រវត្តិ:\n" + (lines + missing).joinToString("\n")
+    }
+
+    /**
+     * 🎵 Measure with the music itself (host, while playing): each phone in turn plays the same
+     * few seconds of the song alone (the others muted) while this microphone listens; comparing
+     * the recordings shows how much later each phone is really heard — the whole path, YouTube
+     * included — and the delays are set from that. Every phone's mute is put back afterwards.
+     */
+    private fun runMusicDelay() {
+        val s = server ?: return
+        val p = active
+        if (measuringDelay || earMode) return
+        if (p == null || !p.isPlaying) {
+            mixerPanel.setAutoStatus("▶ សូមចាក់បទសិន រួចចុច 🎵 ម្ដងទៀត")
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val phones = s.clientList().filter { it.mix != null }
+        if (phones.isEmpty()) {
+            mixerPanel.setAutoStatus("គ្មានទូរស័ព្ទកូនភ្ជាប់ទេ")
+            return
+        }
+        measuringDelay = true
+        val youtube = p === ytPlayer
+        val startAt = p.position
+        // YouTube buffers after every jump; local songs are ready almost at once.
+        val settle = if (youtube) 4000L else 1500L
+        val hostMuted = mixer.current().muted
+        val clientMixes = phones.associate { it.key to Mix.decode(it.mix)!! }
+        val recordings = arrayOfNulls<AutoDelay.Recording>(phones.size + 1)
+        val positions = DoubleArray(phones.size + 1)
+
+        fun mute(only: Int) {
+            // Through mixerSet, so the master volume doesn't take the host's mute as a button press.
+            mixerSet(MixerPanel.SELF, mixer.current().copy(muted = only != 0))
+            phones.forEachIndexed { i, c -> setClientMix(c, clientMixes.getValue(c.key).copy(muted = only != i + 1)) }
+        }
+
+        fun finish() {
+            // Everything audible again, as it was.
+            mixerSet(MixerPanel.SELF, mixer.current().copy(muted = hostMuted))
+            phones.forEach { c -> setClientMix(c, clientMixes.getValue(c.key)) }
+            thread(isDaemon = true) {
+                val host = recordings[0]
+                val lags = (0..phones.size).map { j ->
+                    when {
+                        host == null -> null
+                        j == 0 -> 0.0
+                        else -> recordings[j]?.let { AutoDelay.musicLag(host, positions[0], it, positions[j]) }
+                    }
+                }
+                main.post {
+                    measuringDelay = false
+                    measuredKeys += phones.map { it.key }
+                    mixerPanel.setAutoStatus(
+                        if (host == null) "⚠ មិនអាចប្រើ Microphone បានទេ"
+                        else applyDelays(phones, lags).replace("✔ បានកំណត់", "🎵 ✔ បានកំណត់")
+                    )
+                    mixerPanel.refresh()
+                }
+            }
+        }
+
+        fun step(j: Int) {
+            if (j > phones.size) return finish()
+            val name = if (j == 0) "👑 Host" else "📱 ${phones[j - 1].name}"
+            mixerPanel.setAutoStatus("🎵 កំពុងវាស់ ${j + 1}/${phones.size + 1}: $name ចាក់តែឯង…")
+            mute(only = j)
+            hostPlay(startAt)
+            main.postDelayed({
+                thread(isDaemon = true) {
+                    val rec = AutoDelay.record(now() + 4000)
+                    main.post {
+                        recordings[j] = rec
+                        // Song position minus host time while it played (position = time + this).
+                        positions[j] = if (j == 0) {
+                            (active?.position ?: 0L) - now().toDouble()
+                        } else {
+                            val c = phones[j - 1]
+                            if (now() - c.cursorAt < 3000) (c.cursorMs - c.cursorAt).toDouble() else Double.NaN
+                        }
+                        if (positions[j].isNaN()) recordings[j] = null
+                        step(j + 1)
+                    }
+                }
+            }, START_DELAY_MS + settle)
+        }
+        step(0)
     }
 
     // -------------------------------------------------------------- 🎧 by ear
