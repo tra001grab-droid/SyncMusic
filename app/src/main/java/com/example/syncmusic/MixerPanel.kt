@@ -371,9 +371,9 @@ class MixerPanel(
                 else -> "  ✔ ត្រូវគ្នា"
             }
         }
-        // The host is the reference: nothing to move, but it can be muted too.
+        // The host can be moved too (e.g. it alone is early: −10/−50); only 🎯 makes no sense there.
         val buttons = row.getChildAt(5) as LinearLayout
-        for (i in 1 until buttons.childCount) buttons.getChildAt(i).visibility = if (track.isHost) View.INVISIBLE else View.VISIBLE
+        buttons.getChildAt(3).visibility = if (track.isHost) View.INVISIBLE else View.VISIBLE
         (buttons.getChildAt(0) as Button).apply {
             text = if (track.muted) "🔈" else "🔇"
             backgroundTintList = ColorStateList.valueOf(if (track.muted) 0xFFB71C1C.toInt() else 0xFF424242.toInt())

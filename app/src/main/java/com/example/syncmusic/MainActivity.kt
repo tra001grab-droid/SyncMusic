@@ -1326,8 +1326,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         val s = server
         when (deviceId) {
             MixerPanel.SELF -> {
+                val change = mix.delayMs - mixer.delayMs
                 mixer.apply(mix)
                 reportMix()
+                // ✋ Clients don't follow the host while stopped, so the host itself moves instead
+                // (same result: + = the host plays further ahead of the others).
+                val p = active
+                if (holdPref && change != 0 && p != null && p.isPlaying) p.seekTo(p.position + change)
             }
             MixerPanel.ALL -> {
                 // Volume/EQ for everyone, but each phone keeps its own delay.
