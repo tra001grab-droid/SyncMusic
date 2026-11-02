@@ -63,6 +63,7 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         private const val SERVICE_TYPE = "_syncmusic._tcp."
         private const val START_DELAY_MS = 1500L      // time given to every phone to get ready
         private const val POS_INTERVAL_MS = 1000L
+        private const val MASTER_MIN_VOLUME = 7           // master volume steps never go below this
         private const val EAR_PERIOD_MS = 1000L        // 🎧 by ear: one beep a second
         private const val EAR_MAX_MS = 180_000L        // 🎧 beeps stop by themselves after 3 minutes
         private const val SOFT_ERROR_MS = 15L          // error above this -> nudge speed
@@ -1184,10 +1185,13 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
 
     /** The host's volume step as last seen; changes the app made itself are recorded here first. */
     private var lastHostVolumeIndex = -1
+    /** Phones the master volume silenced (host at 0); turned back on when the host goes up again. */
+    private val masterMuted = mutableSetOf<Int>()
 
     /**
      * Host: its own volume moved (side buttons, also with the screen off) → every joined phone's
      * volume moves by the same amount, like a master volume. Changes made in the mixer don't count.
+     * Host down to 0 → the others are muted (keeping their level), and come back when it goes up.
      */
     private fun masterVolume() {
         val s = server ?: return
@@ -1199,10 +1203,22 @@ class MainActivity : AppCompatActivity(), SyncClient.Listener {
         for (c in s.clientList()) {
             val mix = Mix.decode(c.mix) ?: continue
             // Not into Boost (above 100%) this way; a phone already there can only come down.
-            val volume = (mix.volume + delta).coerceIn(0, maxOf(100, mix.volume))
-            if (volume != mix.volume) setClientMix(c, mix.copy(volume = volume))
+            // Never down to 0 by steps either: phones treat 0 as muted and wouldn't come back.
+            val floor = minOf(MASTER_MIN_VOLUME, mix.volume)
+            var next = mix.copy(volume = (mix.volume + delta).coerceIn(floor, maxOf(100, mix.volume)))
+            if (index == 0 && !mix.muted) {
+                next = next.copy(muted = true)
+                masterMuted += c.key
+            } else if (index > 0 && c.key in masterMuted) {
+                next = next.copy(muted = false)
+            }
+            if (next != mix) setClientMix(c, next)
         }
-        setStatus(hostStatus("🔊 Master volume: ${if (delta > 0) "+" else ""}$delta% គ្រប់ទូរស័ព្ទ"))
+        if (index > 0) masterMuted.clear()
+        setStatus(hostStatus(
+            if (index == 0) "🔇 Master volume: បិទសំឡេងគ្រប់ទូរស័ព្ទ"
+            else "🔊 Master volume: ${if (delta > 0) "+" else ""}$delta% គ្រប់ទូរស័ព្ទ"
+        ))
     }
 
     /** Client: tell the host our current volume/EQ (only when it changed). */
