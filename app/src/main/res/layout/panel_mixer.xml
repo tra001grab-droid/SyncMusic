@@ -108,26 +108,12 @@
                         android:textColor="#80CBC4"
                         android:textSize="13sp" />
 
-                    <LinearLayout
+                    <Button
+                        android:id="@+id/mixerAutoRun"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical">
-
-                        <Button
-                            android:id="@+id/mixerAutoRun"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="🔄 វាស់ម្ដងទៀត"
-                            android:textAllCaps="false" />
-
-                        <!-- 🎵 Measure with the music itself: every phone, the host included. -->
-                        <Button
-                            android:id="@+id/mixerMusicRun"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="🎵 វាស់ជាមួយភ្លេង"
-                            android:textAllCaps="false" />
-                    </LinearLayout>
+                        android:text="🔄 វាស់ម្ដងទៀត"
+                        android:textAllCaps="false" />
                 </LinearLayout>
 
                 <!-- Options of the microphone measurement (shown with 🤖 Auto). -->

@@ -31,8 +31,6 @@ class MixerPanel(
     private val autoDelayOn: () -> Boolean = { false },
     private val onAutoDelay: (on: Boolean) -> Unit = {},
     private val onMeasure: () -> Unit = {},
-    /** 🎵 Measure with the music itself. */
-    private val onMeasureMusic: () -> Unit = {},
     /** 🔇 silent (19 kHz) beeps for the microphone measurement. */
     private val silentOn: () -> Boolean = { false },
     private val onSilent: (on: Boolean) -> Unit = {},
@@ -134,7 +132,6 @@ class MixerPanel(
             onAutoDelay(on)
         }
         root.findViewById<Button>(R.id.mixerAutoRun).setOnClickListener { onMeasure() }
-        root.findViewById<Button>(R.id.mixerMusicRun).setOnClickListener { onMeasureMusic() }
         root.findViewById<android.widget.CheckBox>(R.id.mixerSilent).apply {
             isChecked = silentOn()
             setOnCheckedChangeListener { _, on -> onSilent(on) }
@@ -374,9 +371,9 @@ class MixerPanel(
                 else -> "  ✔ ត្រូវគ្នា"
             }
         }
-        // The host can be moved too (e.g. it alone is early: −10/−50); only 🎯 makes no sense there.
+        // The host is the reference: nothing to move, but it can be muted too.
         val buttons = row.getChildAt(5) as LinearLayout
-        buttons.getChildAt(3).visibility = if (track.isHost) View.INVISIBLE else View.VISIBLE
+        for (i in 1 until buttons.childCount) buttons.getChildAt(i).visibility = if (track.isHost) View.INVISIBLE else View.VISIBLE
         (buttons.getChildAt(0) as Button).apply {
             text = if (track.muted) "🔈" else "🔇"
             backgroundTintList = ColorStateList.valueOf(if (track.muted) 0xFFB71C1C.toInt() else 0xFF424242.toInt())

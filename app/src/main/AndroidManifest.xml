@@ -18,7 +18,7 @@
         android:label="Sync Music"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar"
+        android:theme="@style/Theme.SyncMusic"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
